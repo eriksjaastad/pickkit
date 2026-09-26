@@ -1,14 +1,84 @@
-"""Companion discovery and move-with-companions.
+"""Companion discovery and move-with-companions for pickkit image batches.
 
-Invariants enforced here:
+This module is the single source of truth for companion-file behaviour:
+what counts as a companion, how companions are discovered, and how they
+move with their image. Pixel writes and cropping are deliberately out of
+scope here; ``lib_safety`` only moves and trashes files (write protection
+lives in ``guards.py``).
 
-* A move relocates an image **and** every recognised same-stem sidecar next
-  to it, so the pair/group never gets split across directories.
-* The destination is never allowed to clobber an existing file: if any
-  target path already exists, the whole operation is refused before any
-  file is moved.
-* Files are moved, never rewritten in place: ``shutil.move`` only changes
-  location, not bytes.
+Core principles
+---------------
+Always together
+    A move relocates an image **and** every recognised same-stem sidecar
+    next to it, so a pair/group is never split across directories.
+Stem discovery
+    Companions are found by matching the image's stem (filename without
+    extension). Nothing else about the files is inspected.
+No clobber
+    If any destination path already exists, the whole move is refused
+    before anything is moved.
+Move relocates bytes, never rewrites pixels
+    Files are relocated with ``shutil.move``; their bytes are never read,
+    decoded, re-encoded, or written back. Pixel output such as crops is
+    out of scope for this module.
+
+What counts as a companion
+--------------------------
+A companion is a file in the image's directory whose stem equals the
+image's stem and whose suffix (case-insensitive) is recognised. The
+recognised suffixes come from ``DEFAULT_COMPANION_SUFFIXES`` — see that
+constant for the current default set. The image itself is never treated
+as a companion, even if its suffix matches.
+
+For example, next to ``shot_001.png``::
+
+    shot_001.yaml    -> companion
+    shot_001.txt     -> companion
+    shot_001.png     -> the image; never returned
+    shot_002.yaml    -> not a companion (different stem)
+
+Public API
+----------
+``find_companions(image_path, *, suffixes=None)``
+    Return same-stem sidecar files next to *image_path*, sorted by name.
+    ``suffixes=None`` uses :data:`DEFAULT_COMPANION_SUFFIXES`; a string
+    or iterable of suffixes overrides it.
+
+``MoveResult``
+    Frozen dataclass describing where a move-with-companions landed:
+    ``image`` is the final image path and ``companions`` are the final
+    sidecar paths.
+
+``move_with_companions(image_path, destination, *, suffixes=None, hook=None)``
+    Move *image_path* and its same-stem companions to *destination*.
+    Returns a :class:`MoveResult` and refuses with
+    :class:`DestinationExistsError` before moving anything if any target
+    already exists.
+
+Examples
+--------
+Discover companions without touching the filesystem::
+
+    from lib_safety import find_companions
+
+    companions = find_companions("sandbox/batch_a/shot_001.png")
+
+Move an image and its sidecars into an existing directory::
+
+    from lib_safety import move_with_companions
+
+    result = move_with_companions(
+        "sandbox/batch_a/shot_001.png",
+        "sandbox/batch_a_staging",
+    )
+    result.image       # staging path of shot_001.png
+    result.companions  # staging paths of shot_001.yaml, shot_001.txt
+
+Out of scope
+------------
+Pixel writes, crops, and image save/export are **not** this module's job.
+``lib_safety`` only moves and trashes files; write protection is enforced
+separately by ``guards.require_new_file``.
 """
 
 from __future__ import annotations
@@ -50,8 +120,11 @@ def find_companions(
 ) -> list[Path]:
     """Return same-stem sidecar files next to *image_path*, sorted by name.
 
-    The image itself is never included, even if its suffix is in
-    ``suffixes``. ``suffixes=None`` uses :data:`DEFAULT_COMPANION_SUFFIXES`.
+    A candidate must share the image's stem and have a recognised suffix;
+    see the module docstring for the full companion rule. The image itself
+    is never included, even if its suffix is in ``suffixes``.
+    ``suffixes=None`` uses :data:`DEFAULT_COMPANION_SUFFIXES`; pass a
+    string or iterable of suffixes to override it.
     """
     image = _as_path(image_path)
     wanted = _normalise_suffixes(suffixes)
@@ -69,7 +142,11 @@ def find_companions(
 
 @dataclass(frozen=True)
 class MoveResult:
-    """Where a move-with-companions landed."""
+    """Where a move-with-companions landed.
+
+    ``image`` is the final image path and ``companions`` are the final
+    sidecar paths, in the same sorted order as discovery.
+    """
 
     image: Path
     companions: tuple[Path, ...]
@@ -101,6 +178,10 @@ def move_with_companions(
     :class:`DestinationExistsError` before anything is moved. The image is
     moved last, so a failed companion move never leaves the primary file in
     the destination while its sidecars are still at the source.
+
+    Files are relocated, never rewritten in place: ``shutil.move`` changes
+    location, not bytes. With ``hook`` given, one :class:`AuditEvent` is
+    recorded on success or refusal.
     """
     image = _as_path(image_path)
     if not image.is_file():
