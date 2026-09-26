@@ -18,6 +18,9 @@ dev = [
     "Pillow>=10.0",
 ]
 
+[project.scripts]
+pickkit-intake = "intake_init.intake:main"
+
 [tool.setuptools.packages.find]
 where = ["packages"]
 
