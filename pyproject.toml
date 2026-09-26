@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 pickkit-intake = "intake_init.intake:main"
+pickkit-review = "review_select.review:main"
 
 [tool.setuptools.packages.find]
 where = ["packages"]

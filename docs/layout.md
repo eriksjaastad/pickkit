@@ -19,6 +19,8 @@ installable packages live under `packages/`, one directory per plugin/library.
     ├── packages/
     │   ├── pickkit_core/        # shared version / constants stub
     │   ├── lib_safety/          # move-with-companions, trash, no-overwrite guards, audit
+    │   ├── intake_init/         # point at a directory; manifest; audit baseline
+    │   ├── review_select/       # keep/crop/reject triage; decision log
     │   └── README.md            # planned plugin list
     ├── sandbox/                 # synthetic fixtures (no client content)
     ├── tests/                   # repo-level smoke + plugin tests
