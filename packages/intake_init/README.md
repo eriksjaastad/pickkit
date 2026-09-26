@@ -10,5 +10,7 @@ The authoritative behaviour reference is the module docstring of
 against drift.
 
 Run it with `python -m intake_init <batch_root>` or the `pickkit-intake`
-console script (`--force` overwrites an existing manifest). See the module
-docstring for the full public API and invariants.
+console script. Re-intake is safe by default: an existing `.pickkit/` is
+backed up to a sibling `.pickkit.bak.<UTC>` before a fresh one is written;
+`--force` skips the backup and overwrites in place. See the module docstring
+for the full public API and invariants.
