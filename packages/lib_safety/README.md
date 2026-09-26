@@ -4,9 +4,9 @@ Shared safety primitives for pickkit plugins. This is the first template
 plugin: later plugins import these helpers instead of hand-rolling risky file
 operations.
 
-The authoritative companion-behaviour reference is the module docstring of
-`packages/lib_safety/companions.py`; `tests/test_lib_safety_docs.py` guards it
-against drift.
+The authoritative behaviour references are the module docstrings of
+`packages/lib_safety/companions.py`, `trash.py`, `guards.py`, and `audit.py`;
+`tests/test_lib_safety_docs.py` guards them against drift.
 
 ## Invariants
 

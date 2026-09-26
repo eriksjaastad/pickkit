@@ -1,10 +1,59 @@
 """Audit event types and hook interfaces for lib_safety.
 
-Moves, trash deletes, and refused writes can emit structured
-:class:`AuditEvent` objects to any object implementing the
-:class:`AuditHook` protocol. The default hook is a no-op;
-:class:`JsonlAuditHook` provides a small append-only JSONL sink for
-callers who want a durable log.
+This module is the single source of truth for audit behaviour: what events
+exist, how they are recorded, and where they go. Moves, trash deletes, and
+refused writes can emit structured :class:`AuditEvent` objects to any
+object implementing the :class:`AuditHook` protocol. The default hook is a
+no-op; :class:`JsonlAuditHook` provides a small append-only JSONL sink for
+callers who want a durable log. The precursor FileTracker was a heavier
+system — pickkit uses only this lightweight hook API.
+
+Principles
+----------
+Structured events
+    Every safety-relevant operation (move, trash, refuse_write) is
+    captured as one :class:`AuditEvent` with operation, source,
+    destination, companions, ok, reason, and timestamp fields.
+Default is a no-op
+    Nothing is logged unless the caller supplies a hook; ``NULL_HOOK`` is
+    a shared :class:`NullAuditHook` instance used by default everywhere.
+Append-only JSONL
+    :class:`JsonlAuditHook` appends one JSON line per event to a
+    caller-supplied log path; existing log contents are never read or
+    rewritten.
+UTC timestamps
+    Event timestamps come from :func:`utc_now`, an ISO-8601 UTC ``Z``
+    time.
+
+Public API
+----------
+``utc_now()``
+    Return an ISO-8601 UTC timestamp with a ``Z`` suffix.
+``AuditEvent``
+    Frozen, JSON-serializable dataclass describing one safety operation.
+``AuditHook``
+    Protocol for audit sinks: a single ``record`` method.
+``NullAuditHook``
+    Default no-op audit hook.
+``NULL_HOOK``
+    Shared :class:`NullAuditHook` instance used by default everywhere.
+``JsonlAuditHook``
+    Append-only JSONL audit sink at a caller-supplied log path.
+
+Examples
+--------
+Record an event on a JSONL hook::
+
+    from lib_safety import AuditEvent, JsonlAuditHook
+
+    hook = JsonlAuditHook("sandbox/.audit.jsonl")
+    hook.record(AuditEvent(operation="move", source="a.png", destination="b.png"))
+
+Out of scope
+------------
+DB-backed trackers, rewriting past log lines, and auto-discovering log
+paths are **not** this module's job. The log path is always
+caller-supplied, and the sink only ever appends.
 """
 
 from __future__ import annotations

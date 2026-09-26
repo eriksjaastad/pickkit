@@ -1,16 +1,15 @@
 """lib_safety: shared safety primitives for pickkit plugins.
 
-Public API:
+Submodule docstrings are the single source of truth for behaviour:
 
-* :func:`move_with_companions` — move an image and its same-stem sidecars
-  together; refuses to clobber existing destinations.
-* :func:`find_companions` / :data:`DEFAULT_COMPANION_SUFFIXES` — companion
-  discovery.
-* :func:`trash` — recoverable delete via ``send2trash``.
-* :func:`require_new_file` — refuse writes that would overwrite an existing
-  path.
-* Audit types — :class:`AuditEvent`, :class:`AuditHook`,
-  :class:`NullAuditHook`, :class:`JsonlAuditHook`.
+* ``lib_safety.companions`` — companion discovery and move-with-companions.
+* ``lib_safety.trash`` — recoverable deletes via ``send2trash``.
+* ``lib_safety.guards`` — no-overwrite / no-in-place-write enforcement.
+* ``lib_safety.audit`` — audit events and hook interfaces.
+* ``lib_safety.errors`` — exception types.
+
+This package re-exports the public names listed in :data:`__all__` (see
+the tuple below) so plugins can import them from ``lib_safety`` directly.
 """
 
 from .audit import NULL_HOOK, AuditEvent, AuditHook, JsonlAuditHook, NullAuditHook
