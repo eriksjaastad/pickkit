@@ -25,7 +25,7 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Status
 
-Scaffolded 2026-09-26: monorepo layout, package stubs, and synthetic sandbox fixtures are in place. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md).
+Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** implemented (#7650). Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md).
 
 ## License
 
