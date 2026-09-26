@@ -1,0 +1,5 @@
+# pickkit synthetic sandbox sidecar
+batch=batch_a
+image=img_004.png
+kind=synthetic
+purpose=companion-move testing
