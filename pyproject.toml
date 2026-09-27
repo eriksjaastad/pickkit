@@ -30,6 +30,7 @@ where = ["packages"]
 
 [tool.setuptools.package-data]
 review_select = ["templates/*"]
+multi_crop = ["templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

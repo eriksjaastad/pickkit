@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pickkit crop — {{ batch_name }}</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #14161a;
+      color: #e6e6e6;
+      margin: 0;
+      padding: 1.5rem;
+    }
+    main { max-width: 1100px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 1.25rem; margin: 0; }
+    .counts { color: #9aa4b2; }
+    .stage { display: flex; flex-direction: column; gap: 1rem; margin-top: 1.25rem; }
+    .frame {
+      position: relative;
+      background: #1d2026;
+      border: 1px solid #2b303b;
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .frame img {
+      display: inline-block;
+      max-width: 100%;
+      max-height: 70vh;
+      border-radius: 6px;
+      user-select: none;
+    }
+    .frame canvas {
+      position: absolute;
+      pointer-events: none;
+      border-radius: 6px;
+    }
+    .readout { color: #cfe3ff; text-align: center; font-variant-numeric: tabular-nums; }
+    .empty { padding: 3rem 1rem; text-align: center; color: #9aa4b2; }
+    .empty code { color: #cfe3ff; }
+    .actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    button {
+      font-size: 1rem;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      border: 1px solid #3a4150;
+      background: #242a35;
+      color: #e6e6e6;
+      cursor: pointer;
+    }
+    button:hover { background: #2d3544; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.apply { border-color: #2e7d32; }
+    button.skip { border-color: #b26a00; }
+    button.reset { border-color: #4f6d8f; }
+    .shortcuts { color: #9aa4b2; font-size: 0.9rem; text-align: center; }
+    .error { color: #ffb4ab; text-align: center; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>pickkit crop — {{ batch_name }}</h1>
+      <div class="counts">
+        <span id="remaining">{{ remaining }}</span> remaining ·
+        <span id="cropped">{{ cropped }}</span> cropped this session
+      </div>
+    </header>
+
+    <div class="stage">
+      {% if current %}
+      <div class="frame">
+        <img id="image" src="/image/{{ current }}" alt="{{ current_name }}">
+        <canvas id="canvas"></canvas>
+      </div>
+      <div class="readout">
+        Box (image px): <span id="box">—</span>
+      </div>
+      <div class="actions">
+        <button id="apply" class="apply" disabled>Apply crop (Enter)</button>
+        <button id="skip" class="skip">Skip (S)</button>
+        <button id="reset" class="reset">Reset rect (R)</button>
+      </div>
+      <div class="shortcuts">
+        Drag a rectangle on the image. Enter = Apply, S = Skip, R = Reset —
+        source: <span id="source">{{ current }}</span>
+      </div>
+      {% else %}
+      <div class="empty">
+        <p>Queue empty — no pending images under <code>__crop/</code>.</p>
+        <p>Finish stays CLI-only for now: keep using <code>pickkit-crop</code> with <code>--finish</code> in scripts.</p>
+      </div>
+      {% endif %}
+      <div class="error" id="error"></div>
+    </div>
+  </main>
+
+  <script>
+    const img = document.getElementById("image");
+    const canvas = document.getElementById("canvas");
+    const boxNode = document.getElementById("box");
+    const errorNode = document.getElementById("error");
+    const applyBtn = document.getElementById("apply");
+
+    let natural = {width: 0, height: 0};
+    let displayRect = null;  // display-pixel rectangle while dragging
+    let fullRect = null;     // full-image-pixel rectangle (integers)
+    let dragging = false;
+    let dragStart = null;
+
+    const currentSource = () => {
+      const node = document.getElementById("source");
+      return node ? node.textContent : "";
+    };
+
+    const displayPos = (event) => {
+      const rect = img.getBoundingClientRect();
+      const x = Math.max(0, Math.min(event.clientX - rect.left, img.clientWidth));
+      const y = Math.max(0, Math.min(event.clientY - rect.top, img.clientHeight));
+      return {x, y};
+    };
+
+    const toFull = (p) => {
+      const w = img.clientWidth || 1;
+      const h = img.clientHeight || 1;
+      return {
+        x: Math.max(0, Math.min(Math.round(p.x * (natural.width / w)), natural.width)),
+        y: Math.max(0, Math.min(Math.round(p.y * (natural.height / h)), natural.height)),
+      };
+    };
+
+    const syncCanvas = () => {
+      if (!canvas) return;
+      canvas.width = img.clientWidth;
+      canvas.height = img.clientHeight;
+      canvas.style.left = img.offsetLeft + "px";
+      canvas.style.top = img.offsetTop + "px";
+      canvas.style.width = img.clientWidth + "px";
+      canvas.style.height = img.clientHeight + "px";
+    };
+
+    const draw = () => {
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!displayRect) return;
+      const x = Math.min(displayRect.left, displayRect.right);
+      const y = Math.min(displayRect.top, displayRect.bottom);
+      const w = Math.abs(displayRect.right - displayRect.left);
+      const h = Math.abs(displayRect.bottom - displayRect.top);
+      if (w < 1 || h < 1) return;
+      ctx.strokeStyle = "#7cb8ff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = "rgba(124, 184, 255, 0.15)";
+      ctx.fillRect(x, y, w, h);
+    };
+
+    const updateFullRect = () => {
+      if (!displayRect) return null;
+      const left = Math.min(displayRect.left, displayRect.right);
+      const right = Math.max(displayRect.left, displayRect.right);
+      const top = Math.min(displayRect.top, displayRect.bottom);
+      const bottom = Math.max(displayRect.top, displayRect.bottom);
+      const a = toFull({x: left, y: top});
+      const b = toFull({x: right, y: bottom});
+      let l = Math.max(0, Math.min(a.x, natural.width));
+      let r = Math.max(0, Math.min(b.x, natural.width));
+      let t = Math.max(0, Math.min(a.y, natural.height));
+      let bo = Math.max(0, Math.min(b.y, natural.height));
+      if (r <= l) r = Math.min(l + 1, natural.width);
+      if (bo <= t) bo = Math.min(t + 1, natural.height);
+      fullRect = {left: l, top: t, right: r, bottom: bo};
+      boxNode.textContent = `(${l}, ${t}, ${r}, ${bo})`;
+      applyBtn.disabled = false;
+      return fullRect;
+    };
+
+    const resetRect = () => {
+      displayRect = null;
+      fullRect = null;
+      dragging = false;
+      dragStart = null;
+      if (boxNode) boxNode.textContent = "—";
+      if (applyBtn) applyBtn.disabled = true;
+      draw();
+    };
+
+    const refreshCounts = (data) => {
+      document.getElementById("remaining").textContent = data.remaining;
+      document.getElementById("cropped").textContent = data.cropped_this_session;
+    };
+
+    const showCurrent = (rel) => {
+      if (!rel) {
+        location.reload();
+        return;
+      }
+      document.getElementById("source").textContent = rel;
+      resetRect();
+      img.src = "/image/" + rel;
+    };
+
+    const post = (url, body) => {
+      return fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      }).then(async (resp) => {
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+        return data;
+      });
+    };
+
+    const applyCrop = () => {
+      const source = currentSource();
+      if (!source || !fullRect) return;
+      errorNode.textContent = "";
+      post("/api/crop", {
+        source,
+        box: [fullRect.left, fullRect.top, fullRect.right, fullRect.bottom],
+      })
+        .then((data) => {
+          refreshCounts(data);
+          showCurrent(data.current);
+        })
+        .catch((err) => {
+          errorNode.textContent = err.message;
+        });
+    };
+
+    const skip = () => {
+      const source = currentSource();
+      if (!source) return;
+      errorNode.textContent = "";
+      post("/api/skip", {source})
+        .then((data) => {
+          refreshCounts(data);
+          showCurrent(data.current);
+        })
+        .catch((err) => {
+          errorNode.textContent = err.message;
+        });
+    };
+
+    const onImageReady = () => {
+      natural = {width: img.naturalWidth, height: img.naturalHeight};
+      syncCanvas();
+      resetRect();
+    };
+
+    if (img.complete && img.naturalWidth) {
+      onImageReady();
+    } else {
+      img.addEventListener("load", onImageReady);
+    }
+
+    img.addEventListener("mousedown", (event) => {
+      if (!natural.width) return;
+      event.preventDefault();
+      dragging = true;
+      const p = displayPos(event);
+      dragStart = p;
+      displayRect = {left: p.x, top: p.y, right: p.x, bottom: p.y};
+      syncCanvas();
+      draw();
+      updateFullRect();
+    });
+
+    window.addEventListener("mousemove", (event) => {
+      if (!dragging) return;
+      const p = displayPos(event);
+      displayRect = {left: dragStart.x, top: dragStart.y, right: p.x, bottom: p.y};
+      draw();
+      updateFullRect();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      updateFullRect();
+      draw();
+    });
+
+    window.addEventListener("resize", () => {
+      syncCanvas();
+      draw();
+    });
+
+    applyBtn.addEventListener("click", applyCrop);
+    document.getElementById("skip").addEventListener("click", skip);
+    document.getElementById("reset").addEventListener("click", resetRect);
+
+    document.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      if (key === "enter") {
+        event.preventDefault();
+        applyCrop();
+      } else if (key === "s") {
+        event.preventDefault();
+        skip();
+      } else if (key === "r") {
+        event.preventDefault();
+        resetRect();
+      }
+    });
+  </script>
+</body>
+</html>

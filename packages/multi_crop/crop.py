@@ -16,6 +16,11 @@ Library first
     :func:`crop_batch` is the batch behaviour; the CLI in this module is a
     thin wrapper around it. :func:`apply_crop` is the low-level single-crop
     primitive and is usable standalone (no intake required).
+Interactive UI
+    ``pickkit-crop <batch_root> --ui`` starts the local Flask crop page in
+    ``multi_crop.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8766
+    defaults). The UI calls :func:`crop_batch` for every Apply — it never
+    reimplements pixel writes, crops-log records, or manifest updates.
 Batch must be intake'd
     ``<batch_root>/.pickkit/project.json`` must already exist (created by
     intake-init). Batch mode refuses with :class:`FileNotFoundError` before
@@ -116,9 +121,12 @@ Public API
     description is this module docstring. ``--crops`` loads a JSON/JSONL
     specs file; ``--source`` and ``--box`` accept one source and one
     ``L,T,R,B`` box each, are repeatable, and pair positionally; ``--finish``
-    marks the step finished after applying.
+    marks the step finished after applying; ``--ui`` starts the interactive
+    web UI from ``multi_crop.ui`` (with optional ``--host`` / ``--port``
+    overrides for its 127.0.0.1:8766 defaults).
 ``main(argv=None)``
-    CLI entry point; parses args and calls :func:`crop_batch`.
+    CLI entry point; parses args and calls :func:`crop_batch` (or
+    :func:`multi_crop.ui.run_ui` when ``--ui`` is set).
 
 Examples
 --------
@@ -143,10 +151,16 @@ Crop a batch from the CLI::
 
     pickkit-crop tmp/batch_a --crops crops.jsonl --finish
 
+Start the interactive crop UI::
+
+    pickkit-crop tmp/batch_a --ui
+
 Out of scope
 ------------
-Interactive desktop / web UI is a follow-on; this card ships the batch
-library + thin CLI only. AI crop preload / training / SQLite, normalized
+Interactive UI is **no longer** out of scope: ``multi_crop.ui`` implements
+the local Flask crop page and ``pickkit-crop <batch_root> --ui`` starts it
+(see that module's docstring for UI behaviour, host/port, shortcuts, box
+mapping, and routes). AI crop preload / training / SQLite, normalized
 [0,1] coordinates, moving/deleting sources after crop, finish-package ZIP
 staging, and companion sidecar rewriting are **not** this module's job.
 """
@@ -660,6 +674,8 @@ def _parse_box(text: str) -> tuple[int, int, int, int]:
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the argparse parser for the ``pickkit-crop`` CLI."""
+    from .ui import DEFAULT_HOST, DEFAULT_PORT
+
     parser = argparse.ArgumentParser(
         prog="pickkit-crop",
         description=__doc__,
@@ -696,6 +712,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Mark the multi_crop step finished after applying crops",
     )
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Start the local interactive crop web UI (Flask) instead of applying crops",
+    )
+    parser.add_argument(
+        "--host",
+        metavar="HOST",
+        default=DEFAULT_HOST,
+        help=(
+            "Host interface for the --ui web server "
+            f"(default: {DEFAULT_HOST})"
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        metavar="PORT",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Port for the --ui web server (default: {DEFAULT_PORT})",
+    )
     return parser
 
 
@@ -703,6 +740,22 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point; parses args and calls :func:`crop_batch`."""
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    from .ui import DEFAULT_HOST, DEFAULT_PORT
+
+    if not args.ui and (args.host != DEFAULT_HOST or args.port != DEFAULT_PORT):
+        parser.error("--host and --port may only be used together with --ui")
+
+    if args.ui:
+        from .ui import run_ui
+
+        if args.crops or args.source or args.box or args.finish:
+            parser.error(
+                "--ui cannot be combined with "
+                "--crops/--source/--box/--finish"
+            )
+        run_ui(args.batch_root, host=args.host, port=args.port)
+        return 0
 
     if args.crops and (args.source or args.box):
         parser.error("use either --crops or --source/--box, not both")
