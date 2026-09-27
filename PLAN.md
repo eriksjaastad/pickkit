@@ -1,6 +1,6 @@
 # pickkit — product & extract plan
 
-**Status:** accepted 2026-09-26 (Erik) — template plugin first: **lib-safety**  
+**Status:** accepted 2026-09-26 (Erik) — spine GUIs done; middle tools 3/4/5 authorized for public v1 (2026-09-27)  
 **Board:** http://localhost:8000/kanban/pickkit  
 **Public repo (when Erik says go):** `eriksjaastad/pickkit`  
 **Precursor (private, reference-only):** `~/projects/image-workflow`  
@@ -29,9 +29,9 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 | 0 | **intake-init** | Point at a directory; manifest; sidecars/tracking; start step recording; safety baseline | **Yes** |
 | 1 | **review-select** | Triage into keep / crop / reject; log decisions | **Yes** |
 | 2 | **multi-crop** | Create NEW crops only; never overwrite originals | **Yes** |
-| 3 | **character-tools** | Group / sort / check (may split later) | **TBD** |
-| 4 | **directory-viewer** | Multi-directory inspection | **TBD** |
-| 5 | **duplicate-finder** | Near-dup thinning | **TBD** |
+| 3 | **character-tools** | Group / sort / check (may split later) | **Yes** (public v1) |
+| 4 | **directory-viewer** | Multi-directory inspection | **Yes** (public v1) |
+| 5 | **duplicate-finder** | Near-dup thinning | **Yes** (public v1) |
 | 6 | **finish-package** | Close manifest; stage delivery ZIP | **Yes** |
 | L | **lib-safety** | Shared: move-not-modify, companions, trash, audit | **Yes** |
 | M | **lib-metrics** | Efficiency / snapshots hooks | **Maybe** |
@@ -68,7 +68,7 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 3. Contract sketch for 0, 1, 2, 6, L on sandbox layout
 4. Extract **one** template plugin end-to-end (`lib-safety` or `intake-init`)
 5. Core spine: review-select + multi-crop + finish-package
-6. Middle tools only after Erik’s daily-vs-rare call
+6. Middle tools authorized 2026-09-27 (Erik): character-tools / directory-viewer / duplicate-finder for public v1 + case study
 7. Public GitHub when Erik says go; #6650 privacy delete stays separate
 8. Write case-study chapters for real
 
@@ -99,3 +99,4 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 |------|------|
 | 2026-09-26 | Scaffold from clipstash↔Erik alignment; name locked **pickkit**; precursor = image-workflow. |
 | 2026-09-26 | Erik accepted PLAN; first template plugin = **lib-safety**; middle tools remain TBD. |
+| 2026-09-27 | MIT license added. Middle tools 3/4/5 → **Yes** (public v1) for case-study completeness; library+CLI first, UI follow-on. Spine GUIs (review/crop/finish) done. |

@@ -12,7 +12,7 @@ pickkit is a public, composable set of workflow steps (plugins) for:
 4. **Finish / package** — close out and stage a delivery (local finish wizard)
 5. **Shared safety** — move-don’t-modify originals, companions together, recoverable deletes
 
-Middle tools (character sort, duplicate find, multi-dir viewer) may join after the core spine.
+Middle tools (character sort, duplicate find, multi-dir viewer) are in progress for public v1 (optional vs the four-step spine; wanted for case-study completeness).
 
 ## Precursor
 
@@ -25,8 +25,8 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Status
 
-Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop** (library + CLI + local Flask crop UI), and **finish-package** (library + CLI + local Flask finish wizard) implemented. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md).
+Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop** (library + CLI + local Flask crop UI), and **finish-package** (library + CLI + local Flask finish wizard) implemented. Core spine GUIs done. **Middle tools** (character-tools, directory-viewer, duplicate-finder) authorized for public v1 — library + CLI in progress for case-study completeness. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md). Licensed **MIT** ([LICENSE](LICENSE)).
 
 ## License
 
-TBD (MIT expected when the public GitHub repo opens).
+[MIT](LICENSE) — Copyright (c) 2026 Erik Sjaastad.
