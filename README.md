@@ -9,7 +9,7 @@ pickkit is a public, composable set of workflow steps (plugins) for:
 1. **Intake / initialize** — point at a directory; tracking, sidecars, step recording
 2. **Review / select** — pick keepers from a huge pile
 3. **Crop** — the only step allowed to write new image pixels
-4. **Finish / package** — close out and stage a delivery
+4. **Finish / package** — close out and stage a delivery (local finish wizard)
 5. **Shared safety** — move-don’t-modify originals, companions together, recoverable deletes
 
 Middle tools (character sort, duplicate find, multi-dir viewer) may join after the core spine.
@@ -25,7 +25,7 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Status
 
-Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop**, and **finish-package** implemented. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md).
+Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop** (library + CLI + local Flask crop UI), and **finish-package** (library + CLI + local Flask finish wizard) implemented. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md).
 
 ## License
 

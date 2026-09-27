@@ -7,8 +7,9 @@ classified against the allowlist and the default bans, how the copy-only
 delivery ZIP is written (never modifying source bytes), and how the manifest
 is closed on commit. The private precursor had an interactive wizard UI,
 client project IDs, pre-made delivery paths, rclone upload tips, and SQLite
-wiring; pickkit's finish-package is a small library + thin CLI that only reads
-source files and writes its own ZIP plus manifest/audit updates.
+wiring; pickkit's finish-package is a library + thin CLI + local web wizard
+that only reads source files and writes its own ZIP plus manifest/audit
+updates.
 
 Principles
 ----------
@@ -124,7 +125,9 @@ Public API
     description is this module docstring. ``--commit`` writes the ZIP and
     closes the manifest; ``--force`` allows overwriting an existing ZIP;
     ``--content`` overrides the content directory; ``--output`` overrides the
-    ZIP path.
+    ZIP path; ``--ui`` starts the interactive web wizard from
+    ``finish_package.ui`` (``--host`` / ``--port`` override its bind and are
+    only valid together with ``--ui``).
 ``main(argv=None)``
     CLI entry point; parses args and calls :func:`finish_package`.
 ``EXCLUDED_BUCKETS``
@@ -191,14 +194,28 @@ Finish a batch from the CLI (dry-run, then commit)::
     pickkit-finish tmp/batch_a
     pickkit-finish tmp/batch_a --commit --force
 
+Finish a batch interactively::
+
+    pickkit-finish tmp/batch_a --ui
+
+Interactive wizard
+------------------
+``pickkit-finish <batch_root> --ui`` starts the local Flask finish wizard from
+``finish_package.ui``. It binds ``127.0.0.1:8767`` by default (``--host`` /
+``--port`` override it and are only valid together with ``--ui``), always
+opens with a dry-run preview of the eligible/excluded report, and confirms
+before writing the delivery ZIP. The wizard is documented in the module
+docstring of ``finish_package.ui``; every refresh and commit still calls
+:func:`finish_package` in this module.
+
 Out of scope
 ------------
-Interactive wizard / desktop UI is a follow-on; this card ships the batch
-library + thin CLI only. Custom bans JSON files / allowlist override files
-(v1 hardcodes ``DEFAULT_BANNED_EXTENSIONS`` + ``DEFAULT_BANNED_PATTERNS``),
-uploading the ZIP (rclone etc.), strict companion-integrity failure mode, and
-scanning ``__crop`` / ``__reject`` / batch-root loose files by default are
-**not** this module's job.
+Custom bans JSON files / allowlist override files (v1 hardcodes
+``DEFAULT_BANNED_EXTENSIONS`` + ``DEFAULT_BANNED_PATTERNS``), uploading the
+ZIP (rclone etc.), strict companion-integrity failure mode, and scanning
+``__crop`` / ``__reject`` / batch-root loose files by default are **not**
+this module's job. Desktop/Tk wizard variants and middle-spine tools are out
+of scope too.
 """
 
 from __future__ import annotations
@@ -699,6 +716,8 @@ def finish_package(
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the argparse parser for the ``pickkit-finish`` CLI."""
+    from .ui import DEFAULT_HOST, DEFAULT_PORT
+
     parser = argparse.ArgumentParser(
         prog="pickkit-finish",
         description=__doc__,
@@ -734,6 +753,27 @@ def build_parser() -> argparse.ArgumentParser:
             "relative paths resolve under batch_root"
         ),
     )
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Start the local interactive finish web wizard (Flask) instead of finishing",
+    )
+    parser.add_argument(
+        "--host",
+        metavar="HOST",
+        default=DEFAULT_HOST,
+        help=(
+            "Host interface for the --ui web server "
+            f"(default: {DEFAULT_HOST})"
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        metavar="PORT",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Port for the --ui web server (default: {DEFAULT_PORT})",
+    )
     return parser
 
 
@@ -741,6 +781,23 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point; parses args and calls :func:`finish_package`."""
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    from .ui import DEFAULT_HOST, DEFAULT_PORT
+
+    if not args.ui and (args.host != DEFAULT_HOST or args.port != DEFAULT_PORT):
+        parser.error("--host and --port may only be used together with --ui")
+
+    if args.ui:
+        from .ui import run_ui
+
+        if args.commit or args.force or args.content or args.output:
+            parser.error(
+                "--ui cannot be combined with "
+                "--commit/--force/--content/--output"
+            )
+        run_ui(args.batch_root, host=args.host, port=args.port)
+        return 0
+
     try:
         result = finish_package(
             args.batch_root,
