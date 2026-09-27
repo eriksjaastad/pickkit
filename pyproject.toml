@@ -25,6 +25,7 @@ pickkit-review = "review_select.review:main"
 pickkit-crop = "multi_crop.crop:main"
 pickkit-finish = "finish_package.finish:main"
 pickkit-character = "character_tools.character:main"
+pickkit-dupes = "duplicate_finder.dupes:main"
 
 [tool.setuptools.packages.find]
 where = ["packages"]
