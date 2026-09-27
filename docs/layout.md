@@ -22,6 +22,7 @@ installable packages live under `packages/`, one directory per plugin/library.
     │   ├── intake_init/         # point at a directory; manifest; audit baseline
     │   ├── review_select/       # keep/crop/reject triage; decision log
     │   ├── multi_crop/          # NEW crops under __cropped/; never overwrite originals
+    │   ├── finish_package/      # close manifest; stage copy-only delivery ZIP
     │   └── README.md            # planned plugin list
     ├── sandbox/                 # synthetic fixtures (no client content)
     ├── tests/                   # repo-level smoke + plugin tests
