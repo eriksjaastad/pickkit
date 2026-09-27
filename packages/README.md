@@ -10,6 +10,6 @@ Planned plugins (from PLAN.md §2). The first template plugin is **lib-safety**.
 | `review_select/` | triage into keep / crop / reject; log decisions | implemented |
 | `multi_crop/` | create NEW crops only; never overwrite originals | implemented |
 | `finish_package/` | close manifest; stage delivery ZIP | implemented |
+| `character_tools/` | assign images to user-supplied named bins + companions | implemented (library+CLI) |
 
-TBD middle tools: `character_tools`, `directory_viewer`, `duplicate_finder`,
-`lib_metrics`.
+TBD middle tools: `directory_viewer`, `duplicate_finder`, `lib_metrics`.

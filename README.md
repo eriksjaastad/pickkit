@@ -25,7 +25,7 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Status
 
-Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop** (library + CLI + local Flask crop UI), and **finish-package** (library + CLI + local Flask finish wizard) implemented. Core spine GUIs done. **Middle tools** (character-tools, directory-viewer, duplicate-finder) authorized for public v1 — library + CLI in progress for case-study completeness. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md). Licensed **MIT** ([LICENSE](LICENSE)).
+Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop** (library + CLI + local Flask crop UI), and **finish-package** (library + CLI + local Flask finish wizard) implemented. Core spine GUIs done. **Middle tools** (character-tools, directory-viewer, duplicate-finder) authorized for public v1 — **character-tools** library + CLI shipped; directory-viewer and duplicate-finder in progress for case-study completeness. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md). Licensed **MIT** ([LICENSE](LICENSE)).
 
 ## License
 
