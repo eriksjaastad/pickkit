@@ -14,6 +14,11 @@ Principles
 Library first
     :func:`apply_decisions` is the whole behaviour; the CLI in this module is a
     thin wrapper around it.
+Interactive UI
+    ``pickkit-review <batch_root> --ui`` starts the local Flask review page in
+    ``review_select.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8765
+    defaults). The UI calls :func:`apply_decisions` for every action — it
+    never reimplements moves, logs, or manifest updates.
 Batch must be intake'd
     ``<batch_root>/.pickkit/project.json`` must already exist (created by
     intake-init). Anything else is refused with :class:`FileNotFoundError`
@@ -82,9 +87,12 @@ Public API
     description is this module docstring. ``--decisions`` loads a JSON/JSONL
     decisions file; ``--keep`` / ``--crop`` / ``--reject`` accept one image
     path each and are repeatable; ``--finish`` marks the step finished after
-    applying.
+    applying; ``--ui`` starts the interactive web UI from ``review_select.ui``
+    (with optional ``--host`` / ``--port`` overrides for its 127.0.0.1:8765
+    defaults).
 ``main(argv=None)``
-    CLI entry point; parses args and calls :func:`apply_decisions`.
+    CLI entry point; parses args and calls :func:`apply_decisions` (or
+    :func:`review_select.ui.run_ui` when ``--ui`` is set).
 
 Examples
 --------
@@ -102,11 +110,13 @@ Triage a batch from the CLI::
 
 Out of scope
 ------------
-Interactive UI (web or desktop) is a follow-on; this card ships the batch
-library + thin CLI only. Pixel crops (multi-crop), trash/recycle of rejects
-(a later cleanup plugin), AI recommendations, finish ZIP packaging
-(finish-package), and client-specific taxonomy/prompts are **not** this
-module's job.
+Pixel crops (multi-crop), trash/recycle of rejects (a later cleanup plugin),
+AI recommendations, finish ZIP packaging (finish-package), and
+client-specific taxonomy/prompts are **not** this module's job. Interactive
+UI is **no longer** out of scope: ``review_select.ui`` implements the local
+Flask review page and ``pickkit-review <batch_root> --ui`` starts it (see
+that module's docstring for UI behaviour, host/port, keyboard shortcuts, and
+UI-specific deferrals).
 """
 
 from __future__ import annotations
@@ -472,6 +482,8 @@ def load_decisions(path: str | Path) -> list[Decision]:
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the argparse parser for the ``pickkit-review`` CLI."""
+    from .ui import DEFAULT_HOST, DEFAULT_PORT
+
     parser = argparse.ArgumentParser(
         prog="pickkit-review",
         description=__doc__,
@@ -512,6 +524,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Reject one image path; repeatable",
     )
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Start the local interactive review web UI (Flask) instead of applying decisions",
+    )
+    parser.add_argument(
+        "--host",
+        metavar="HOST",
+        default=DEFAULT_HOST,
+        help=(
+            "Host interface for the --ui web server "
+            f"(default: {DEFAULT_HOST})"
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        metavar="PORT",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Port for the --ui web server (default: {DEFAULT_PORT})",
+    )
     return parser
 
 
@@ -519,6 +552,22 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point; parses args and calls :func:`apply_decisions`."""
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    from .ui import DEFAULT_HOST, DEFAULT_PORT
+
+    if not args.ui and (args.host != DEFAULT_HOST or args.port != DEFAULT_PORT):
+        parser.error("--host and --port may only be used together with --ui")
+
+    if args.ui:
+        from .ui import run_ui
+
+        if args.decisions or args.keep or args.crop or args.reject or args.finish:
+            parser.error(
+                "--ui cannot be combined with "
+                "--decisions/--keep/--crop/--reject/--finish"
+            )
+        run_ui(args.batch_root, host=args.host, port=args.port)
+        return 0
 
     flag_paths = list(args.keep) + list(args.crop) + list(args.reject)
     if args.decisions and flag_paths:

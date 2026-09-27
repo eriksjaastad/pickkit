@@ -9,6 +9,7 @@ description = "A kit for picking the best images from large batches. The only im
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "Flask>=3.0",
     "Pillow>=10.0",
     "send2trash>=1.8",
 ]
@@ -26,6 +27,9 @@ pickkit-finish = "finish_package.finish:main"
 
 [tool.setuptools.packages.find]
 where = ["packages"]
+
+[tool.setuptools.package-data]
+review_select = ["templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
