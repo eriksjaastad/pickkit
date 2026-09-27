@@ -1,6 +1,6 @@
 # pickkit — product & extract plan
 
-**Status:** accepted 2026-09-26 (Erik) — spine GUIs done; middle tools 3/4/5 authorized for public v1 (2026-09-27)  
+**Status:** accepted 2026-09-26 (Erik) — spine GUIs done; middle tools 3/4/5 authorized for public v1 (2026-09-27); middle-tool library+CLI set shipped (character / dupes / viewer inventory), UIs follow-on  
 **Board:** http://localhost:8000/kanban/pickkit  
 **Public repo (when Erik says go):** `eriksjaastad/pickkit`  
 **Precursor (private, reference-only):** `~/projects/image-workflow`  
@@ -100,3 +100,4 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 | 2026-09-26 | Scaffold from clipstash↔Erik alignment; name locked **pickkit**; precursor = image-workflow. |
 | 2026-09-26 | Erik accepted PLAN; first template plugin = **lib-safety**; middle tools remain TBD. |
 | 2026-09-27 | MIT license added. Middle tools 3/4/5 → **Yes** (public v1) for case-study completeness; library+CLI first, UI follow-on. Spine GUIs (review/crop/finish) done. |
+| 2026-09-27 | Middle-tool library+CLI set landed (character / dupes / viewer inventory); UIs follow-on. |

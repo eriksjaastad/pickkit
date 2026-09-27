@@ -12,5 +12,6 @@ Planned plugins (from PLAN.md §2). The first template plugin is **lib-safety**.
 | `finish_package/` | close manifest; stage delivery ZIP | implemented |
 | `character_tools/` | assign images to user-supplied named bins + companions | implemented (library+CLI) |
 | `duplicate_finder/` | find exact/near-duplicate images; thin extras into OS trash | implemented (library+CLI) |
+| `directory_viewer/` | read-only multi-directory image inventory; compare roots | implemented (library+CLI) |
 
-TBD middle tools: `directory_viewer`, `lib_metrics`.
+TBD middle tools: `lib_metrics`.
