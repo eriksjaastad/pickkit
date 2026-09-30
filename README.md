@@ -13,7 +13,7 @@ Requires **Python 3.11+**. Commands below use a local virtualenv so they do not 
 ### 1. Clone and install
 
 ```bash
-git clone <path-or-url-to-pickkit> pickkit
+git clone https://github.com/eriksjaastad/pickkit.git pickkit
 cd pickkit
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -113,7 +113,7 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Status
 
-Scaffolded 2026-09-26: monorepo + synthetic sandbox; spine GUIs (review / crop / finish) and middle-tool library+CLI set shipped. Directory-viewer grid UI is follow-on. Plan: [PLAN.md](PLAN.md). Setup: [docs/setup.md](docs/setup.md). Safeguards: [docs/safeguards.md](docs/safeguards.md). Publish checklist: [docs/publish-checklist.md](docs/publish-checklist.md). Issues: [ISSUES.md](ISSUES.md). Licensed **MIT** ([LICENSE](LICENSE)).
+Public toolkit on GitHub: [eriksjaastad/pickkit](https://github.com/eriksjaastad/pickkit) (MIT). Spine GUIs (review / crop / finish) and middle-tool library+CLI set shipped; directory-viewer grid UI is follow-on. Case-study website chapters are a later follow-up. Plan: [PLAN.md](PLAN.md). Setup: [docs/setup.md](docs/setup.md). Safeguards: [docs/safeguards.md](docs/safeguards.md). Publish checklist: [docs/publish-checklist.md](docs/publish-checklist.md). Issues: [ISSUES.md](ISSUES.md).
 
 ## Case study research
 

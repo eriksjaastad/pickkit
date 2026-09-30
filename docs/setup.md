@@ -11,7 +11,7 @@ Stranger-install notes verified against a fresh local clone (venv + `pip install
 ## Install
 
 ```bash
-git clone <pickkit-repo> pickkit
+git clone https://github.com/eriksjaastad/pickkit.git pickkit
 cd pickkit
 python3 -m venv .venv
 source .venv/bin/activate
@@ -27,7 +27,7 @@ Some automated shells block `pip install`. Symptoms: install never runs; only a 
 
 1. Run the install steps in a normal interactive terminal.
 2. Copy or recreate `.venv` on a machine that allows pip, then activate it.
-3. See [ISSUES.md](../ISSUES.md) #1.
+3. See [ISSUES.md](../ISSUES.md) #1 (closed: agent-env only; interactive install is fine).
 
 Editable install from the repo root (`pip install -e ".[dev]"`) is the supported path; there is no separate conda recipe.
 
@@ -67,7 +67,7 @@ Override bind with `--host` / `--port` (only valid with `--ui`).
 Always quote batch roots that contain spaces:
 
 ```bash
-BATCH="/Volumes/work/my client batch"
+BATCH="/path/with spaces/my batch"
 pickkit-intake "$BATCH"
 pickkit-review "$BATCH" --ui
 ```

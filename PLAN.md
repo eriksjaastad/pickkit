@@ -1,8 +1,8 @@
 # pickkit — product & extract plan
 
-**Status:** accepted 2026-09-26 (Erik) — spine GUIs done; middle tools 3/4/5 authorized for public v1 (2026-09-27); middle-tool library+CLI set shipped (character / dupes / viewer inventory), UIs follow-on  
+**Status:** accepted 2026-09-26 (Erik) — spine GUIs done; middle tools 3/4/5 authorized for public v1 (2026-09-27); middle-tool library+CLI set shipped (character / dupes / viewer inventory), UIs follow-on; **public GitHub authorized 2026-09-30**  
 **Board:** http://localhost:8000/kanban/pickkit  
-**Public repo (when Erik says go):** `eriksjaastad/pickkit`  
+**Public repo:** [`eriksjaastad/pickkit`](https://github.com/eriksjaastad/pickkit)  
 **Precursor (private, reference-only):** `~/projects/image-workflow`  
 **Owner seat:** pickkit agent (formerly ImageWorkflow)  
 **Sibling:** clipstash (smaller case study)
@@ -18,7 +18,7 @@
 
 Do **not** scrub-forward the precursor. Rewrite clean. Demos use synthetic/sandbox images only.
 
-Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft); evolve the public narrative here as chapters get written.
+Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft); evolve the public narrative here as chapters get written. **Case-study display** (e.g. Synth Insight Labs site) is a later follow-up — not part of the GitHub toolkit publish.
 
 ---
 
@@ -52,6 +52,7 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 - Chapters drafted with real journal citations (see precursor ROADMAP §2)
 - Without-tools vs with-tools contrast
 - Guardrails mapped to plugins/libs
+- *(Display home TBD later — not blocking toolkit GitHub.)*
 
 ### Not done criteria
 - Bulk copy from image-workflow
@@ -69,16 +70,19 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 4. Extract **one** template plugin end-to-end (`lib-safety` or `intake-init`)
 5. Core spine: review-select + multi-crop + finish-package
 6. Middle tools authorized 2026-09-27 (Erik): character-tools / directory-viewer / duplicate-finder for public v1 + case study
-7. Public GitHub when Erik says go; #6650 privacy delete stays separate
-8. Write case-study chapters for real
+7. Public GitHub when Erik says go; #6650 privacy delete stays separate — **go given 2026-09-30**
+8. Write case-study chapters for real (later)
 
 ---
 
 ## 5. Coding seat rules (Erik)
 
-- Worker = local DeepSeek via `~/bin/deepseek-pty` (never bare `deepseek -x`; no TTY hang)
-- Never Cursor cloud agents for implementation
-- Local exact-HEAD code review; merge when green
+Aligned with portfolio `MODEL_SEATS.md` (2026-09-27+):
+
+- **Worker** = Claude Code (isolated task branch/worktree) for non-trivial code
+- **Judge** = separate local Codex CLI (ChatGPT login) on exact committed HEAD
+- **Never** DeepSeek as coding Worker; never Cursor cloud agents for implementation
+- Docs-only edits may ship from the manager/executor seat with inspection
 - Non-blocking problems → `ISSUES.md`; keep moving
 - Always pass explicit `working_directory` on Mac local Shell
 
@@ -103,4 +107,4 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 | 2026-09-27 | Middle-tool library+CLI set landed (character / dupes / viewer inventory); UIs follow-on. |
 | 2026-09-30 | Case-study journal research index landed (`docs/case-study-journal-index.md`); citations only. |
 | 2026-09-30 | Follow-ons carded: E2E pipe dry-run (unattended); public README + publish checklist (case study site vs GitHub mirror TBD — ask Erik). |
-
+| 2026-09-30 | Seat rules aligned to MODEL_SEATS (Claude Worker / Codex Judge; no DeepSeek). GitHub publish authorized; SIL case-study display deferred. |
