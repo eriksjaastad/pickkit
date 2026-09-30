@@ -101,3 +101,6 @@ Full chapter outline still lives in precursor `image-workflow/ROADMAP.md` (draft
 | 2026-09-26 | Erik accepted PLAN; first template plugin = **lib-safety**; middle tools remain TBD. |
 | 2026-09-27 | MIT license added. Middle tools 3/4/5 → **Yes** (public v1) for case-study completeness; library+CLI first, UI follow-on. Spine GUIs (review/crop/finish) done. |
 | 2026-09-27 | Middle-tool library+CLI set landed (character / dupes / viewer inventory); UIs follow-on. |
+| 2026-09-30 | Case-study journal research index landed (`docs/case-study-journal-index.md`); citations only. |
+| 2026-09-30 | Follow-ons carded: E2E pipe dry-run (unattended); public README + publish checklist (case study site vs GitHub mirror TBD — ask Erik). |
+

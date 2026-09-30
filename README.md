@@ -27,6 +27,12 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 Scaffolded 2026-09-26: monorepo layout + synthetic sandbox fixtures; **lib-safety** (#7650), **intake-init**, **review-select** (library + CLI + local Flask review UI), **multi-crop** (library + CLI + local Flask crop UI), and **finish-package** (library + CLI + local Flask finish wizard) implemented. Core spine GUIs done. **Middle tools** (character-tools, directory-viewer, duplicate-finder) authorized for public v1 — **character-tools**, **duplicate-finder**, and **directory-viewer** library + CLI all shipped; the Flask/Tk grid UI for directory-viewer is still follow-on. Plan: [PLAN.md](PLAN.md). Issues: [ISSUES.md](ISSUES.md). Licensed **MIT** ([LICENSE](LICENSE)).
 
+## Case study research
+
+Journal citation index (paths + incident→guardrail themes only; no secrets):
+[docs/case-study-journal-index.md](docs/case-study-journal-index.md).
+Feeds future case-study chapters; do not paste private journal prose into this tree.
+
 ## License
 
 [MIT](LICENSE) — Copyright (c) 2026 Erik Sjaastad.
