@@ -2,7 +2,7 @@
 
 | | |
 |--|--|
-| **Private precursor** | `/Users/eriksjaastad/projects/image-workflow` |
+| **Private precursor** | `~/projects/_archive/image-workflow` (archived 2026-10-01) |
 | **Public extract** | this repo (`pickkit`) |
 | **Rule** | Rewrite clean for the *job*. Do **not** bulk-copy scripts, client dirs, prompts, or git history into pickkit. |
 

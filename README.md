@@ -104,7 +104,7 @@ See each package README under [`packages/`](packages/).
 
 ## Precursor
 
-Private lessons live in `~/projects/image-workflow` (read-only reference).  
+Private lessons live in `~/projects/_archive/image-workflow` (archived 2026-10-01; read-only reference).  
 See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Sibling
