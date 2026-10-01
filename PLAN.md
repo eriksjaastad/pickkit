@@ -3,7 +3,7 @@
 **Status:** accepted 2026-09-26 (Erik) — spine GUIs done; middle tools 3/4/5 authorized for public v1 (2026-09-27); middle-tool library+CLI set shipped (character / dupes / viewer inventory), UIs follow-on; **public GitHub authorized 2026-09-30**  
 **Board:** http://localhost:8000/kanban/pickkit  
 **Public repo:** [`eriksjaastad/pickkit`](https://github.com/eriksjaastad/pickkit)  
-**Precursor (private, reference-only):** `~/projects/image-workflow`  
+**Precursor (private, reference-only):** `~/projects/_archive/image-workflow` (archived 2026-10-01)  
 **Owner seat:** pickkit agent (formerly ImageWorkflow)  
 **Sibling:** clipstash (smaller case study)
 
