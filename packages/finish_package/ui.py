@@ -118,7 +118,7 @@ Manifest read failures
     when ``project.json`` cannot be read. :func:`finish_package.finish.load_manifest`
     raises :class:`~finish_package.finish.ManifestError` for a missing file,
     a directory, an unreadable file, bad UTF-8, invalid JSON, or JSON that is
-    not an object. One Flask error handler maps that error to JSON. The app
+    not an object. Flask error handlers map that error, and other expected engine errors (``ValueError``, ``NotADirectoryError``, ``FileNotFoundError``), to JSON. The app
     is created only after intake, so these failures are ones that show up on
     a later request.
 
@@ -310,6 +310,22 @@ def create_app(batch_root: str | Path) -> Flask:
     def missing_file(exc: FileNotFoundError):
         """JSON for a manifest or inventory that disappeared after startup."""
         return jsonify({"error": str(exc)}), 404
+
+    @app.errorhandler(NotADirectoryError)
+    def not_a_directory(exc: NotADirectoryError):
+        """JSON for an expected engine path that is not a directory."""
+        return jsonify({"error": str(exc)}), 400
+
+    @app.errorhandler(ValueError)
+    def bad_value(exc: ValueError):
+        """JSON for other expected engine errors, including a bad inventory.
+
+        ``ManifestError`` is a ``ValueError`` and keeps its own handler.
+        A malformed allowlist used to be caught on ``GET /`` and shown in
+        the page; without this handler that request is an HTML 500 while
+        ``/api/status`` still returns the diagnostic.
+        """
+        return jsonify({"error": str(exc)}), 400
 
     def report_payload(
         content: str | None = None, output: str | None = None

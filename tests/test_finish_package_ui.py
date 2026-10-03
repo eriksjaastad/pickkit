@@ -433,3 +433,22 @@ def test_commit_reports_json_when_the_summary_reread_fails(
     assert _manifest(root)["finished_at"] == body["finished_at"]
     lowered = commit.data.lower()
     assert b"<html" not in lowered
+
+
+def test_index_returns_json_for_a_bad_inventory(tmp_path: Path) -> None:
+    """A bad allowlist must not turn the landing page into an HTML 500."""
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    inventory = root / ".pickkit" / "allowed_ext.json"
+    inventory.write_text("{not json", encoding="utf-8")
+
+    page = client.get("/")
+    status = client.get("/api/status")
+
+    assert page.is_json
+    assert page.status_code == 400
+    assert b"<html" not in page.data.lower()
+    assert "Expecting property name" in page.get_json()["error"]
+    assert status.is_json
+    assert status.status_code == 400
+    assert status.get_json()["error"] == page.get_json()["error"]
