@@ -20,7 +20,9 @@ Interactive UI
     ``pickkit-crop <batch_root> --ui`` starts the local Flask crop page in
     ``multi_crop.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8766
     defaults). The UI calls :func:`crop_batch` for every Apply — it never
-    reimplements pixel writes, crops-log records, or manifest updates.
+    reimplements pixel writes, crops-log records, or manifest updates. Drag
+    an axis-aligned rectangle. Keyboard shortcuts are ``Enter`` apply,
+    ``S`` skip, and ``R`` reset the rectangle.
 Batch must be intake'd
     ``<batch_root>/.pickkit/project.json`` must already exist (created by
     intake-init). Batch mode refuses with :class:`FileNotFoundError` before

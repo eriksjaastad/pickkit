@@ -109,7 +109,18 @@ Routes
     returns the report plus ``zip_path`` and ``finished_at``. Collisions
     without Force return 409 with a clear error (``RefusedWriteError`` /
     ``FileExistsError``); missing batches/inventories return 404 and bad
-    overrides return 400, so the page never crashes.
+    overrides return 400. The body includes ``committed``: false when the
+    commit did not finish, and a JSON 500 with ``committed`` true when the
+    ZIP and manifest close succeeded but the follow-up summary could not be
+    re-read.
+Manifest read failures
+    Every route, including ``GET /``, answers JSON (never an HTML error page)
+    when ``project.json`` cannot be read. :func:`finish_package.finish.load_manifest`
+    raises :class:`~finish_package.finish.ManifestError` for a missing file,
+    a directory, an unreadable file, bad UTF-8, invalid JSON, or JSON that is
+    not an object. One Flask error handler maps that error to JSON. The app
+    is created only after intake, so these failures are ones that show up on
+    a later request.
 
 Out of scope / Notes
 --------------------
@@ -124,7 +135,6 @@ Out of scope / Notes
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
@@ -135,10 +145,12 @@ from .finish import (
     INVENTORY_NAME,
     MANIFEST_NAME,
     PICKKIT_DIR_NAME,
+    ManifestError,
     classify_file,
     default_content_roots,
     finish_package,
     load_allowlist,
+    load_manifest,
 )
 
 #: Default bind host for the local finish wizard (loopback only).
@@ -258,12 +270,14 @@ def sample_paths(
 
 
 def _read_finished_at(root: Path) -> str | None:
-    """Return the manifest's top-level ``finished_at`` string, or ``None``."""
-    manifest_path = root / PICKKIT_DIR_NAME / MANIFEST_NAME
-    try:
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    """Return the manifest's top-level ``finished_at`` string, or ``None``.
+
+    Uses :func:`finish_package.finish.load_manifest`. A missing file, a
+    directory, an unreadable file, bad UTF-8, invalid JSON, or a non-object
+    raises :class:`~finish_package.finish.ManifestError` naming the path
+    instead of looking like "not committed".
+    """
+    data = load_manifest(root / PICKKIT_DIR_NAME / MANIFEST_NAME)
     finished_at = data.get("finished_at")
     return finished_at if isinstance(finished_at, str) else None
 
@@ -286,6 +300,16 @@ def create_app(batch_root: str | Path) -> Flask:
     root = _require_intaked_root(batch_root)
     app = Flask(__name__)
     app.config["BATCH_ROOT"] = root
+
+    @app.errorhandler(ManifestError)
+    def manifest_read_failed(exc: ManifestError):
+        """JSON for every manifest-read failure that escapes a view."""
+        return jsonify({"error": str(exc)}), 400
+
+    @app.errorhandler(FileNotFoundError)
+    def missing_file(exc: FileNotFoundError):
+        """JSON for a manifest or inventory that disappeared after startup."""
+        return jsonify({"error": str(exc)}), 404
 
     def report_payload(
         content: str | None = None, output: str | None = None
@@ -338,38 +362,29 @@ def create_app(batch_root: str | Path) -> Flask:
 
     @app.get("/")
     def index() -> str:
-        try:
-            payload = report_payload()
-            error: str | None = None
-        except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
-            payload = None
-            error = str(exc)
-
-        by_ext_included_text = ""
-        excluded_counts_text = ""
-        status_text = ""
-        if payload is not None:
-            by_ext_included_text = (
-                " ".join(
-                    f"{ext}={count}"
-                    for ext, count in payload["by_ext_included"].items()
-                )
-                or "—"
+        # Manifest and other engine failures propagate to the JSON error
+        # handlers above. This view only renders a successful dry-run.
+        payload = report_payload()
+        by_ext_included_text = (
+            " ".join(
+                f"{ext}={count}"
+                for ext, count in payload["by_ext_included"].items()
             )
-            excluded_counts_text = " ".join(
-                f"{bucket}={payload['excluded_counts'][bucket]}"
-                for bucket in EXCLUDED_BUCKETS
-            )
-            status_text = _status_text(payload)
+            or "—"
+        )
+        excluded_counts_text = " ".join(
+            f"{bucket}={payload['excluded_counts'][bucket]}"
+            for bucket in EXCLUDED_BUCKETS
+        )
         return render_template(
             "finish.html",
             batch_root=root,
             batch_name=root.name,
             report=payload,
-            error=error,
+            error=None,
             by_ext_included_text=by_ext_included_text,
             excluded_counts_text=excluded_counts_text,
-            status_text=status_text,
+            status_text=_status_text(payload),
         )
 
     @app.get("/api/status")
@@ -421,13 +436,31 @@ def create_app(batch_root: str | Path) -> Flask:
                 output_zip=output,
             )
         except FileExistsError as exc:  # includes RefusedWriteError
-            return jsonify({"error": str(exc)}), 409
+            return jsonify({"error": str(exc), "committed": False}), 409
         except FileNotFoundError as exc:
-            return jsonify({"error": str(exc)}), 404
+            return jsonify({"error": str(exc), "committed": False}), 404
         except (NotADirectoryError, ValueError) as exc:
-            return jsonify({"error": str(exc)}), 400
+            # ManifestError is a ValueError. The commit did not finish.
+            return jsonify({"error": str(exc), "committed": False}), 400
 
-        payload = report_payload(content, output)
+        try:
+            payload = report_payload(content, output)
+        except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+            # ZIP and manifest close already succeeded. Say so in JSON
+            # instead of an HTML 500 that looks like nothing was committed.
+            return jsonify({
+                "error": (
+                    "committed, but the batch summary could not be re-read: "
+                    f"{exc}"
+                ),
+                "committed": result.finished_at is not None,
+                "finished_at": result.finished_at,
+                "zip_path": (
+                    _rel(root, result.zip_path) if result.zip_path is not None else None
+                ),
+            }), 500
+
+        payload = dict(payload)
         payload["zip_path"] = (
             _rel(root, result.zip_path) if result.zip_path is not None else None
         )

@@ -99,6 +99,21 @@ Re-initialize a batch from the CLI (backs up first; ``--force`` wipes in place):
 
     python -m intake_init sandbox/batch_a --force
 
+Before intake
+-------------
+Quote a batch root that contains spaces. Keep each image in the same
+directory as its same-stem sidecars before you run intake. Companions are
+paired by filename stem, not by mtime, so ``foo_stage1.png`` and
+``foo_stage1.5.png`` are different stems (see ``lib_safety.companions``).
+
+To intake only one stem family from a large ZIP, extract the matching names
+into one directory first (image and sidecars side by side), then point
+intake at that directory::
+
+    mkdir -p ".scratch/subset batch"
+    unzip "/path/to/delivery.zip" "path/inside/zip/*stage1*" -d ".scratch/subset batch"
+    pickkit-intake ".scratch/subset batch"
+
 Out of scope
 ------------
 Stage directories (``__selected``, ``__crop``, character groups), pixel

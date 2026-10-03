@@ -8,6 +8,7 @@ committed sandbox is never mutated. No real browser is required.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -320,3 +321,115 @@ def test_cli_refuses_host_port_without_ui(
         main([str(root), "--port", "9999"])
     assert exc.value.code == 2
     assert "--host and --port" in capsys.readouterr().err
+
+
+def _break_manifest(root: Path, kind: str) -> Path:
+    """Damage ``.pickkit/project.json`` in one of the read-failure ways."""
+    manifest = root / ".pickkit" / "project.json"
+    payloads = {
+        "non_object_list": "[]",
+        "non_object_number": "42",
+        "non_object_null": "null",
+        "non_object_string": '"nope"',
+        "non_object_bool": "true",
+    }
+    if kind == "missing":
+        manifest.unlink()  # governance: allow-delete DS001: pytest tmp_path copy of the intake manifest
+    elif kind == "unreadable":
+        manifest.chmod(0)
+    elif kind == "directory":
+        manifest.unlink()  # governance: allow-delete DS001: pytest tmp_path copy replaced by a directory
+        manifest.mkdir()
+    elif kind == "bad_json":
+        manifest.write_text("{not json", encoding="utf-8")
+    elif kind in payloads:
+        manifest.write_text(payloads[kind], encoding="utf-8")
+    elif kind == "bad_encoding":
+        manifest.write_bytes(b"\xff\xfe{")
+    else:
+        raise AssertionError(kind)
+    return manifest
+
+
+@pytest.mark.parametrize("method,url", [
+    ("GET", "/"),
+    ("GET", "/api/status"),
+    ("POST", "/api/refresh"),
+    ("POST", "/api/commit"),
+])
+@pytest.mark.parametrize("kind", [
+    "missing",
+    "unreadable",
+    "directory",
+    "bad_json",
+    "non_object_list",
+    "non_object_number",
+    "non_object_null",
+    "non_object_string",
+    "non_object_bool",
+    "bad_encoding",
+])
+def test_manifest_read_failures_return_json(
+    tmp_path: Path, method: str, url: str, kind: str
+) -> None:
+    if kind == "unreadable" and os.geteuid() == 0:
+        pytest.skip("root ignores file permissions")
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    manifest = _break_manifest(root, kind)
+    try:
+        kwargs = {"json": {}} if method == "POST" else {}
+        response = client.open(url, method=method, **kwargs)
+        assert response.is_json, response.data[:200]
+        assert response.status_code == (404 if kind == "missing" else 400)
+        body = response.get_json()
+        assert str(manifest) in body["error"]
+        lowered = response.data.lower()
+        assert b"<html" not in lowered
+        assert b"<!doctype" not in lowered
+        if kind == "bad_json":
+            assert "not valid JSON" in body["error"]
+        if kind.startswith("non_object"):
+            assert "not a JSON object" in body["error"]
+        if kind == "bad_encoding":
+            assert "UTF-8" in body["error"]
+        if kind == "directory":
+            assert "directory" in body["error"]
+        if url == "/api/commit":
+            assert body["committed"] is False
+            assert not (root / DEFAULT_ZIP_NAME).exists()
+    finally:
+        if kind == "unreadable" and manifest.is_file():
+            manifest.chmod(0o644)
+
+
+def test_load_manifest_names_the_path_for_a_missing_file(tmp_path: Path) -> None:
+    from finish_package.finish import ManifestError, load_manifest
+
+    missing = tmp_path / "project.json"
+    with pytest.raises(ManifestError, match="cannot read manifest") as exc:
+        load_manifest(missing)
+    assert str(missing) in str(exc.value)
+
+
+def test_commit_reports_json_when_the_summary_reread_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+
+    def unreadable(*_args: object, **_kwargs: object) -> str | None:
+        raise ui.ManifestError("cannot read manifest: injected after commit")
+
+    monkeypatch.setattr(ui, "_read_finished_at", unreadable)
+    commit = client.post("/api/commit", json={})
+    assert commit.status_code == 500
+    assert commit.is_json
+    body = commit.get_json()
+    assert "committed, but the batch summary could not be re-read" in body["error"]
+    assert body["committed"] is True
+    assert body["finished_at"]
+    assert body["zip_path"] == DEFAULT_ZIP_NAME
+    assert _manifest(root)["finished_at"] == body["finished_at"]
+    lowered = commit.data.lower()
+    assert b"<html" not in lowered

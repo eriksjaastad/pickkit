@@ -4,7 +4,7 @@
 
 Not a general image-processing suite. Not Lightroom. Not the private client pipeline.
 
-When you are staring at tens of thousands of candidates, the expensive part is not “filters” — it is **keeping the keepers, discarding safely, and never wondering what you just lost**. pickkit is a small, composable toolkit for that job: intake a folder, triage keep / crop / reject, write **new** crop files only when needed, then stage a copy-only delivery ZIP. Shared safety primitives (companions travel together, trash instead of silent delete, dry-run before commit) are the point, not an afterthought. See [docs/safeguards.md](docs/safeguards.md).
+When you are staring at tens of thousands of candidates, the expensive part is not “filters” — it is **keeping the keepers, discarding safely, and never wondering what you just lost**. pickkit is a small, composable toolkit for that job: intake a folder, triage keep / crop / reject, write **new** crop files only when needed, then stage a copy-only delivery ZIP. Shared safety primitives (companions travel together, trash instead of silent delete, dry-run before commit) are the point, not an afterthought. The rules a caller must follow are in each command's `--help` and in the `lib_safety` module docstrings. Why the kit is this strict: [docs/safeguards.md](docs/safeguards.md).
 
 ## Quickstart
 
@@ -35,9 +35,9 @@ cp -R sandbox/batch_a/. .scratch/demo-batch/
 
 pickkit-intake .scratch/demo-batch
 
-pickkit-review .scratch/demo-batch --ui    # http://127.0.0.1:8765  Keep/Crop/Reject (K/C/R)
-pickkit-crop   .scratch/demo-batch --ui    # http://127.0.0.1:8766  drag box, Enter=Apply
-pickkit-finish .scratch/demo-batch --ui    # http://127.0.0.1:8767  preview then Commit ZIP
+pickkit-review .scratch/demo-batch --ui    # port 8765  Keep/Crop/Reject (K/C/R)
+pickkit-crop   .scratch/demo-batch --ui    # port 8766  drag box, Enter=Apply
+pickkit-finish .scratch/demo-batch --ui    # port 8767  preview then Commit ZIP
 ```
 
 All three UIs bind **localhost only** and can run at once on those default ports (`--host` / `--port` override). Finish opens on a **dry-run preview**; nothing is written until you press **Commit ZIP** (or pass `--commit` on the CLI).
@@ -49,25 +49,16 @@ pickkit-intake "/path/with spaces/my batch"
 pickkit-review "/path/with spaces/my batch" --ui
 ```
 
-### 3. Same spine from the CLI (unattended / scripts)
+### 3. Flags, JSONL, and shortcuts
+
+Those live on the command, not in a second manual:
 
 ```bash
-pickkit-intake .scratch/demo-batch
-
-# decisions JSONL: one object per line with source + action (keep|crop|reject)
-pickkit-review .scratch/demo-batch --decisions decisions.jsonl
-# or flag form:
-# pickkit-review .scratch/demo-batch --keep img_001.png --crop img_002.png --reject img_003.png
-
-# crops JSONL: source + box [left, top, right, bottom] (Pillow exclusive right/bottom)
-pickkit-crop .scratch/demo-batch --crops crops.jsonl
-# or: pickkit-crop .scratch/demo-batch --source __crop/img_002.png --box 0,0,32,48
-
-pickkit-finish .scratch/demo-batch              # dry-run report only
-pickkit-finish .scratch/demo-batch --commit     # write delivery.zip + close manifest
+pickkit-intake --help
+pickkit-review --help
+pickkit-crop --help
+pickkit-finish --help
 ```
-
-More detail (space-safe ZIP extracts, decision/crop JSONL shapes, ports): [docs/setup.md](docs/setup.md).
 
 ### 4. Tests
 
@@ -77,7 +68,7 @@ pytest          # or: .venv/bin/pytest
 
 ## Safeguards (built-in)
 
-Visible and invisible protections are documented in **[docs/safeguards.md](docs/safeguards.md)** — sidecar/manifest tracking, move-don’t-modify originals, companions move together, recoverable deletes, backup-then-overwrite on re-intake, crop writes **new** files only, finish dry-run vs commit, and copy-only delivery ZIP.
+Move-don't-modify, companions, trash, no-clobber, and dry-run are the `lib_safety` package docstring and the spine command `--help` text. [docs/safeguards.md](docs/safeguards.md) is only why the kit is this strict.
 
 ## Middle tools (optional)
 
@@ -89,7 +80,7 @@ Not part of the four-step spine; useful for case-study completeness. Library + C
 | `pickkit-dupes` | Exact / near duplicates; thin extras via OS trash; dry-run default |
 | `pickkit-viewer` | Read-only multi-directory inventory / compare |
 
-See each package README under [`packages/`](packages/).
+Flags: `pickkit-character --help`, `pickkit-dupes --help`, `pickkit-viewer --help`.
 
 ## Package map
 
@@ -113,7 +104,7 @@ See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
 
 ## Status
 
-Public toolkit on GitHub: [eriksjaastad/pickkit](https://github.com/eriksjaastad/pickkit) (MIT). Spine GUIs (review / crop / finish) and middle-tool library+CLI set shipped; directory-viewer grid UI is follow-on. Case-study website chapters are a later follow-up. Plan: [PLAN.md](PLAN.md). Setup: [docs/setup.md](docs/setup.md). Safeguards: [docs/safeguards.md](docs/safeguards.md). Publish checklist: [docs/publish-checklist.md](docs/publish-checklist.md). Issues: [ISSUES.md](ISSUES.md).
+Public toolkit on GitHub: [eriksjaastad/pickkit](https://github.com/eriksjaastad/pickkit) (MIT). Spine GUIs (review / crop / finish) and middle-tool library+CLI set shipped; directory-viewer grid UI is follow-on. Case-study website chapters are a later follow-up. Plan: [PLAN.md](PLAN.md). How to run a command: its `--help`. Why the safeguards are strict: [docs/safeguards.md](docs/safeguards.md). Publish checklist: [docs/publish-checklist.md](docs/publish-checklist.md). Issues: [ISSUES.md](ISSUES.md).
 
 ## Case study research
 

@@ -18,7 +18,9 @@ Interactive UI
     ``pickkit-review <batch_root> --ui`` starts the local Flask review page in
     ``review_select.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8765
     defaults). The UI calls :func:`apply_decisions` for every action — it
-    never reimplements moves, logs, or manifest updates.
+    never reimplements moves, logs, or manifest updates. Keyboard shortcuts
+    on that page are ``K`` / ``1`` keep, ``C`` / ``2`` crop, and ``R`` / ``3``
+    reject.
 Batch must be intake'd
     ``<batch_root>/.pickkit/project.json`` must already exist (created by
     intake-init). Anything else is refused with :class:`FileNotFoundError`

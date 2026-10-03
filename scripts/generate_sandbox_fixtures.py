@@ -5,7 +5,11 @@ Run from the repo root:
     .venv/bin/python scripts/generate_sandbox_fixtures.py
 
 Everything produced here is synthetic: tiny Pillow-generated PNGs plus
-companion sidecars. No client/performer content.
+companion sidecars. No client or performer content. Sidecars share the
+image stem. Tests locate ``sandbox/`` from the repository root, not the
+current working directory. If a test needs different shapes or sizes,
+generate them with Pillow here or in a fixture. Do not commit hand-made
+binaries into ``sandbox/``.
 """
 
 from pathlib import Path

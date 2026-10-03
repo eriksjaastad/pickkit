@@ -16,6 +16,13 @@ Principles
 Library first
     :func:`finish_package` is the whole behaviour; the CLI in this module is a
     thin wrapper around it.
+Interactive UI
+    ``pickkit-finish <batch_root> --ui`` starts the local Flask wizard in
+    ``finish_package.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8767
+    defaults, and are only valid together with ``--ui``). The page opens on
+    a dry-run eligible/excluded preview and writes nothing until **Commit
+    ZIP** (the same write as ``--commit``). The Force checkbox matches
+    ``--force``: it may overwrite an existing ZIP only, never source bytes.
 Batch must be intake'd
     ``<batch_root>/.pickkit/project.json`` must already exist (created by
     intake-init). Anything else is refused with :class:`FileNotFoundError`
@@ -107,6 +114,12 @@ Public API
     ``by_ext_included``, ``excluded_counts``, ``incoming_by_ext``,
     ``finished_at`` (``str | None``; None on dry-run), ``manifest_path``,
     ``audit_path``, and ``finish_log_path``.
+``load_manifest(path)``
+    Read ``.pickkit/project.json`` and return it as a ``dict``. Raises
+    :class:`ManifestError` (a :class:`ValueError` whose message names *path*)
+    when the path is missing, a directory, unreadable, not valid UTF-8, not
+    valid JSON, or JSON that is not an object (array, number, string, bool,
+    or null).
 ``load_allowlist(path)``
     Read an intake inventory JSON and return its ``allowedExtensions`` as a
     ``set[str]`` of lowercase, dot-free extensions. Raises
@@ -355,6 +368,51 @@ def _excluded_template() -> dict[str, int]:
     return {bucket: 0 for bucket in EXCLUDED_BUCKETS}
 
 
+class ManifestError(ValueError):
+    """``project.json`` could not be read as a JSON object.
+
+    The message always names the manifest path. Callers (the CLI and the
+    finish wizard) map this to an error response instead of a traceback.
+    """
+
+
+def load_manifest(path: str | Path) -> dict[str, object]:
+    """Read *path* and return the manifest as a JSON object.
+
+    Raises :class:`ManifestError` naming *path* when the path is missing, not
+    a regular file, unreadable, not valid UTF-8, not valid JSON, or JSON that
+    is not an object (``[]``, a number, a string, a bool, or ``null``).
+    """
+    manifest_path = _as_path(path)
+    try:
+        if manifest_path.is_dir():
+            raise ManifestError(
+                f"cannot read manifest {manifest_path}: path is a directory"
+            )
+        text = manifest_path.read_text(encoding="utf-8")
+    except ManifestError:
+        raise
+    except UnicodeDecodeError as exc:
+        raise ManifestError(
+            f"manifest is not valid UTF-8: {manifest_path}: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise ManifestError(
+            f"cannot read manifest {manifest_path}: {exc}"
+        ) from exc
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ManifestError(
+            f"manifest is not valid JSON: {manifest_path}: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise ManifestError(
+            f"manifest is not a JSON object: {manifest_path}"
+        )
+    return data
+
+
 def load_allowlist(path: str | Path) -> set[str]:
     """Read an intake inventory JSON and return its ``allowedExtensions`` set.
 
@@ -539,7 +597,7 @@ def _update_manifest(
     excluded_counts: dict[str, int],
     incoming_by_ext: dict[str, int],
 ) -> None:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = load_manifest(manifest_path)
     steps = manifest.get("steps")
     if not isinstance(steps, list):
         raise ValueError(f"manifest has no 'steps' list: {manifest_path}")
@@ -592,9 +650,11 @@ def finish_package(
     record is appended to ``<batch_root>/.pickkit/finish.jsonl``.
 
     Refuses with :class:`FileNotFoundError` when the batch root is missing, not
-    a directory, not intake'd, or has no inventory; with :class:`ValueError`
-    when ``content`` resolves outside the batch root; and with
-    :class:`RefusedWriteError` when the ZIP already exists without ``force``.
+    a directory, not intake'd, or has no inventory; with :class:`ManifestError`
+    when ``project.json`` cannot be read as a JSON object; with
+    :class:`ValueError` when ``content`` resolves outside the batch root; and
+    with :class:`RefusedWriteError` when the ZIP already exists without
+    ``force``.
     ``force=True`` overwrites an existing ZIP only (never a scanned source).
     """
     root = _as_path(batch_root)
@@ -609,11 +669,14 @@ def finish_package(
     inventory_path = pickkit_dir / INVENTORY_NAME
     audit_path = pickkit_dir / AUDIT_NAME
     finish_log_path = pickkit_dir / FINISH_LOG_NAME
-    if not manifest_path.is_file():
+    if not manifest_path.exists():
         raise FileNotFoundError(
             f"batch is not intake'd: missing manifest {manifest_path}; "
             f"run pickkit-intake first"
         )
+    # Validate before any scan or ZIP write so a bad manifest cannot leave
+    # a delivery ZIP behind. ManifestError names the path.
+    load_manifest(manifest_path)
 
     allowed = load_allowlist(inventory_path)
 
