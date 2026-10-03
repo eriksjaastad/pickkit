@@ -145,6 +145,7 @@ from .finish import (
     INVENTORY_NAME,
     MANIFEST_NAME,
     PICKKIT_DIR_NAME,
+    FinishLogError,
     ManifestError,
     classify_file,
     default_content_roots,
@@ -451,6 +452,17 @@ def create_app(batch_root: str | Path) -> Flask:
                 content=content,
                 output_zip=output,
             )
+        except FinishLogError as exc:
+            # ZIP and manifest close already finished. The log write failed.
+            result = exc.result
+            return jsonify({
+                "error": str(exc),
+                "committed": result.finished_at is not None,
+                "finished_at": result.finished_at,
+                "zip_path": (
+                    _rel(root, result.zip_path) if result.zip_path is not None else None
+                ),
+            }), 500
         except FileExistsError as exc:  # includes RefusedWriteError
             return jsonify({"error": str(exc), "committed": False}), 409
         except FileNotFoundError as exc:

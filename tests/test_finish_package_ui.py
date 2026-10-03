@@ -452,3 +452,43 @@ def test_index_returns_json_for_a_bad_inventory(tmp_path: Path) -> None:
     assert status.is_json
     assert status.status_code == 400
     assert status.get_json()["error"] == page.get_json()["error"]
+
+
+def test_fifo_manifest_returns_json_without_blocking(tmp_path: Path) -> None:
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    manifest = root / ".pickkit" / "project.json"
+    manifest.unlink()  # governance: allow-delete DS001: pytest tmp_path copy replaced by a FIFO
+    os.mkfifo(manifest)
+
+    status = client.get("/api/status")
+
+    assert status.is_json
+    assert status.status_code == 400
+    assert str(manifest) in status.get_json()["error"]
+    assert "not a regular file" in status.get_json()["error"]
+    assert b"<html" not in status.data.lower()
+
+
+def test_commit_stays_committed_when_the_finish_log_cannot_be_written(
+    tmp_path: Path,
+) -> None:
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    audit = root / ".pickkit" / "audit.jsonl"
+    if audit.exists() or audit.is_symlink():
+        audit.unlink()  # governance: allow-delete DS001: pytest tmp_path audit replaced by a broken symlink
+    audit.symlink_to(tmp_path / "missing-log-dir" / "audit.jsonl")
+
+    commit = client.post("/api/commit", json={})
+
+    assert commit.status_code == 500
+    assert commit.is_json
+    body = commit.get_json()
+    assert body["committed"] is True
+    assert body["finished_at"]
+    assert "committed, but the finish log could not be written" in body["error"]
+    assert body["zip_path"] == DEFAULT_ZIP_NAME
+    assert (root / DEFAULT_ZIP_NAME).is_file()
+    assert _manifest(root)["finished_at"] == body["finished_at"]
+    assert b"<html" not in commit.data.lower()

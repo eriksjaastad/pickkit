@@ -368,6 +368,18 @@ def _excluded_template() -> dict[str, int]:
     return {bucket: 0 for bucket in EXCLUDED_BUCKETS}
 
 
+class FinishLogError(Exception):
+    """The ZIP and manifest close finished, but a follow-up log write failed.
+
+    ``result`` is the :class:`FinishResult` for the commit that did complete.
+    The message names the failure. Callers must report the commit as done.
+    """
+
+    def __init__(self, message: str, result: "FinishResult") -> None:
+        super().__init__(message)
+        self.result = result
+
+
 class ManifestError(ValueError):
     """``project.json`` could not be read as a JSON object.
 
@@ -388,6 +400,12 @@ def load_manifest(path: str | Path) -> dict[str, object]:
         if manifest_path.is_dir():
             raise ManifestError(
                 f"cannot read manifest {manifest_path}: path is a directory"
+            )
+        # is_file() is false for a FIFO or other special file. Reading those
+        # can block forever, so reject them before read_text.
+        if not manifest_path.is_file():
+            raise ManifestError(
+                f"cannot read manifest {manifest_path}: not a regular file"
             )
         text = manifest_path.read_text(encoding="utf-8")
     except ManifestError:
@@ -654,7 +672,8 @@ def finish_package(
     when ``project.json`` cannot be read as a JSON object; with
     :class:`ValueError` when ``content`` resolves outside the batch root; and
     with :class:`RefusedWriteError` when the ZIP already exists without
-    ``force``.
+    ``force``, and with :class:`FinishLogError` when the ZIP and manifest
+    close succeeded but the audit or finish log could not be written.
     ``force=True`` overwrites an existing ZIP only (never a scanned source).
     """
     root = _as_path(batch_root)
@@ -743,26 +762,7 @@ def finish_package(
         incoming_by_ext,
     )
 
-    fanout.record(
-        AuditEvent(
-            operation=OPERATION,
-            source=str(root),
-            destination=str(zip_path),
-            ok=True,
-            reason=f"commit=True; eligible_count={eligible_count}",
-        )
-    )
-    _append_jsonl(
-        finish_log_path,
-        {
-            "timestamp": finished_at,
-            "zip": _rel(root, zip_path),
-            "eligible_count": eligible_count,
-            "committed": True,
-        },
-    )
-
-    return FinishResult(
+    result = FinishResult(
         batch_root=root,
         commit=True,
         zip_path=zip_path,
@@ -775,6 +775,31 @@ def finish_package(
         audit_path=audit_path,
         finish_log_path=finish_log_path,
     )
+    try:
+        fanout.record(
+            AuditEvent(
+                operation=OPERATION,
+                source=str(root),
+                destination=str(zip_path),
+                ok=True,
+                reason=f"commit=True; eligible_count={eligible_count}",
+            )
+        )
+        _append_jsonl(
+            finish_log_path,
+            {
+                "timestamp": finished_at,
+                "zip": _rel(root, zip_path),
+                "eligible_count": eligible_count,
+                "committed": True,
+            },
+        )
+    except OSError as exc:
+        raise FinishLogError(
+            f"committed, but the finish log could not be written: {exc}",
+            result,
+        ) from exc
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -869,7 +894,7 @@ def main(argv: list[str] | None = None) -> int:
             content=args.content,
             output_zip=args.output,
         )
-    except (FileNotFoundError, NotADirectoryError, ValueError, FileExistsError) as exc:
+    except (FileNotFoundError, NotADirectoryError, ValueError, FileExistsError, FinishLogError) as exc:
         parser.exit(1, f"pickkit-finish: error: {exc}\n")
 
     excluded = " ".join(
