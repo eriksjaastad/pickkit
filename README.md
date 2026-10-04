@@ -93,11 +93,6 @@ Flags: `pickkit-character --help`, `pickkit-dupes --help`, `pickkit-viewer --hel
 | [`finish_package`](packages/finish_package/) | Copy-only `delivery.zip` + Flask wizard `:8767` |
 | [`character_tools`](packages/character_tools/) / [`duplicate_finder`](packages/duplicate_finder/) / [`directory_viewer`](packages/directory_viewer/) | Optional middle CLIs |
 
-## Precursor
-
-Private lessons live in `~/projects/_archive/image-workflow` (archived 2026-10-01; read-only reference).  
-See [precursor.md](precursor.md). **Do not scrub-and-publish that tree.**
-
 ## Sibling
 
 [clipstash](https://github.com/eriksjaastad/clipstash) is the smaller job→tool case study (video still + title + URL packets).
