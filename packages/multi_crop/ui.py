@@ -60,9 +60,7 @@ Public API
     relative POSIX path, stable), excluding images whose default destination
     ``__cropped/<same name>`` already exists.
 ``safe_image_path(batch_root, rel_or_name)``
-    Resolve *rel_or_name* under *batch_root* and return the absolute
-    :class:`pathlib.Path`. Refuses ``..`` escapes and absolute paths outside
-    the root with :class:`ValueError`.
+    Re-exported from :mod:`lib_safety.webui`, which documents it.
 ``create_app(batch_root, *, session_cropped=None)``
     Build the Flask app for *batch_root*. ``session_cropped`` seeds the
     in-memory cropped counter (default ``0``).
@@ -143,16 +141,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, render_template, request
 from PIL import Image
 
 from intake_init import DEFAULT_IMAGE_SUFFIXES
+from lib_safety import rel_path
+from lib_safety.webui import (
+    require_intaked_root,
+    run_app,
+    safe_image_path,
+    send_batch_image,
+)
 
 from .crop import (
     CROPPED_DIR_NAME,
     CROP_QUEUE_DIR_NAME,
-    MANIFEST_NAME,
-    PICKKIT_DIR_NAME,
     CropSpec,
     crop_batch,
 )
@@ -162,35 +165,6 @@ DEFAULT_HOST = "127.0.0.1"
 
 #: Default bind port for the local crop UI (review-select uses 8765).
 DEFAULT_PORT = 8766
-
-
-def _rel(root: Path, path: Path) -> str:
-    """Return *path* relative to *root* (POSIX style) when it is under it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _require_intaked_root(batch_root: str | Path) -> Path:
-    """Resolve *batch_root* and refuse anything that is not intake'd.
-
-    Mirrors the refusal path of :func:`multi_crop.crop.crop_batch`: the root
-    must exist, be a directory, and contain ``.pickkit/project.json``.
-    """
-    root = Path(batch_root).expanduser()
-    if not root.exists():
-        raise FileNotFoundError(f"batch root not found: {root}")
-    if not root.is_dir():
-        raise NotADirectoryError(f"batch root is not a directory: {root}")
-    root = root.resolve()
-    manifest_path = root / PICKKIT_DIR_NAME / MANIFEST_NAME
-    if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"batch is not intake'd: missing manifest {manifest_path}; "
-            f"run pickkit-intake first"
-        )
-    return root
 
 
 def list_pending_images(batch_root: str | Path) -> list[Path]:
@@ -203,7 +177,7 @@ def list_pending_images(batch_root: str | Path) -> list[Path]:
     ``__cropped/<same name>`` already exists. Returns absolute
     :class:`pathlib.Path` objects sorted by relative POSIX path (stable).
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     crop_dir = root / CROP_QUEUE_DIR_NAME
     if not crop_dir.is_dir():
         return []
@@ -222,30 +196,6 @@ def list_pending_images(batch_root: str | Path) -> list[Path]:
             continue
         pending.append(path)
     return sorted(pending, key=lambda p: p.relative_to(root).as_posix())
-
-
-def safe_image_path(batch_root: str | Path, rel_or_name: str | Path) -> Path:
-    """Resolve *rel_or_name* under *batch_root*, refusing escapes.
-
-    Relative names resolve under the batch root; absolute paths must already
-    resolve under it. Symlinks are resolved, so a link pointing outside the
-    root is refused too. Raises :class:`ValueError` for anything outside the
-    root. This helper only resolves paths; it does not require the file to
-    exist or the batch to be intake'd.
-    """
-    root = Path(batch_root).expanduser()
-    if not root.is_dir():
-        raise ValueError(f"batch root is not a directory: {root}")
-    root = root.resolve()
-    candidate = Path(rel_or_name)
-    if candidate.is_absolute():
-        candidate = candidate.expanduser()
-    else:
-        candidate = root / candidate
-    resolved = candidate.resolve()
-    if not resolved.is_relative_to(root):
-        raise ValueError(f"path escapes batch root: {rel_or_name}")
-    return resolved
 
 
 def _natural_size(path: Path | None) -> dict[str, int] | None:
@@ -270,7 +220,7 @@ def create_app(
     ``cropped_this_session`` and the skip set are kept in-memory on the app
     config (the counter is seeded by *session_cropped*, default ``0``).
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     app = Flask(__name__)
     app.config["BATCH_ROOT"] = root
     app.config["CROPPED_THIS_SESSION"] = int(session_cropped or 0)
@@ -279,12 +229,12 @@ def create_app(
     def status_payload() -> dict[str, object]:
         pending = list_pending_images(root)
         skipped = app.config["SKIPPED"]
-        queue = [path for path in pending if _rel(root, path) not in skipped]
+        queue = [path for path in pending if rel_path(root, path) not in skipped]
         current = queue[0] if queue else None
         return {
             "remaining": len(queue),
             "cropped_this_session": app.config["CROPPED_THIS_SESSION"],
-            "current": _rel(root, current) if current else None,
+            "current": rel_path(root, current) if current else None,
             "natural_size": _natural_size(current),
         }
 
@@ -292,7 +242,7 @@ def create_app(
     def index() -> str:
         pending = list_pending_images(root)
         skipped = app.config["SKIPPED"]
-        queue = [path for path in pending if _rel(root, path) not in skipped]
+        queue = [path for path in pending if rel_path(root, path) not in skipped]
         current_path = queue[0] if queue else None
         return render_template(
             "crop.html",
@@ -300,7 +250,7 @@ def create_app(
             batch_name=root.name,
             remaining=len(queue),
             cropped=app.config["CROPPED_THIS_SESSION"],
-            current=_rel(root, current_path) if current_path else None,
+            current=rel_path(root, current_path) if current_path else None,
             current_name=current_path.name if current_path else None,
         )
 
@@ -333,7 +283,7 @@ def create_app(
         if not image_path.is_file():
             return jsonify({"error": f"source not found: {source}"}), 404
 
-        rel = _rel(root, image_path)
+        rel = rel_path(root, image_path)
         try:
             crop_batch(
                 root,
@@ -367,18 +317,12 @@ def create_app(
         if not image_path.is_file():
             return jsonify({"error": f"source not found: {source}"}), 404
 
-        app.config["SKIPPED"].add(_rel(root, image_path))
+        app.config["SKIPPED"].add(rel_path(root, image_path))
         return jsonify(status_payload())
 
     @app.get("/image/<path:rel>")
     def serve_image(rel: str):
-        try:
-            image_path = safe_image_path(root, rel)
-        except (ValueError, OSError):
-            abort(404)
-        if not image_path.is_file():
-            abort(404)
-        return send_file(image_path)
+        return send_batch_image(root, rel)
 
     return app
 
@@ -390,8 +334,11 @@ def run_ui(
     port: int = DEFAULT_PORT,
 ) -> None:
     """Validate *batch_root* and start the Flask crop server on ``host:port``."""
-    root = _require_intaked_root(batch_root)
-    app = create_app(root)
-    print(f"pickkit crop UI: http://{host}:{port}  (batch: {root})")
-    print("Drag a box on the image. Enter=Apply, S=Skip, R=Reset. Ctrl+C stops the server.")
-    app.run(host=host, port=port, debug=False)
+    run_app(
+        create_app,
+        batch_root,
+        title="crop",
+        hint="Drag a box on the image. Enter=Apply, S=Skip, R=Reset. Ctrl+C stops the server.",
+        host=host,
+        port=port,
+    )

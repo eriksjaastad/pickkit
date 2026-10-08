@@ -9,6 +9,8 @@ from __future__ import annotations
 import importlib
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,8 +24,12 @@ from lib_safety import (
     require_new_file,
     trash,
 )
+from lib_safety.webui import safe_image_path
 
 from conftest import BATCH_A
+
+#: This checkout's ``packages/`` directory (the pytest ``pythonpath``).
+PACKAGES = Path(__file__).resolve().parents[1] / "packages"
 
 
 # ``lib_safety.trash`` the attribute is the public function (re-exported in
@@ -310,3 +316,52 @@ def test_jsonl_audit_hook_appends_structured_lines(tmp_path: Path) -> None:
     assert second["operation"] == "refuse_write"
     assert second["ok"] is False
     assert second["reason"] == "exists"
+
+
+# --- webui ----------------------------------------------------------------
+
+
+def test_safe_image_path_resolves_relative_and_in_root_absolute(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "batch"
+    root.mkdir()
+    image = root / "img.png"
+    image.write_bytes(b"x")
+
+    assert safe_image_path(root, "img.png") == image.resolve()
+    assert safe_image_path(root, str(image)) == image.resolve()
+
+
+def test_safe_image_path_refuses_dotdot_and_absolute_escapes(tmp_path: Path) -> None:
+    root = tmp_path / "batch"
+    root.mkdir()
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="escapes batch root"):
+        safe_image_path(root, "../outside.png")
+    with pytest.raises(ValueError, match="escapes batch root"):
+        safe_image_path(root, str(outside))
+
+
+def test_import_lib_safety_does_not_load_flask_or_webui() -> None:
+    # A fresh interpreter, so modules other tests imported cannot mask a
+    # regression. ``-I`` plus the explicit path makes it load this checkout's
+    # ``packages/``, which it prints back for the assertion below.
+    code = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import lib_safety; "
+        "print(lib_safety.__file__); "
+        "print(sorted(m for m in ('flask', 'lib_safety.webui') if m in sys.modules))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(PACKAGES)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    loaded_from, loaded = result.stdout.splitlines()
+    assert Path(loaded_from).is_relative_to(PACKAGES)
+    assert loaded == "[]"

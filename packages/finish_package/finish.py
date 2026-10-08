@@ -832,19 +832,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    from .ui import DEFAULT_HOST, DEFAULT_PORT
+    from lib_safety.webui import check_ui_args
 
-    if not args.ui and (args.host != DEFAULT_HOST or args.port != DEFAULT_PORT):
-        parser.error("--host and --port may only be used together with --ui")
+    from .ui import DEFAULT_HOST, DEFAULT_PORT, run_ui
 
+    check_ui_args(
+        parser,
+        args,
+        default_host=DEFAULT_HOST,
+        default_port=DEFAULT_PORT,
+        conflicts="--commit/--force/--content/--output",
+        conflicting=bool(args.commit or args.force or args.content or args.output),
+    )
     if args.ui:
-        from .ui import run_ui
-
-        if args.commit or args.force or args.content or args.output:
-            parser.error(
-                "--ui cannot be combined with "
-                "--commit/--force/--content/--output"
-            )
         run_ui(args.batch_root, host=args.host, port=args.port)
         return 0
 

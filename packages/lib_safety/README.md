@@ -7,7 +7,8 @@ operations.
 The authoritative behaviour references are the module docstrings of
 `packages/lib_safety/companions.py`, `trash.py`, `guards.py`, `audit.py`, and
 `batch.py` (helpers shared by the batch engines); `tests/test_module_docs.py`
-guards them against drift.
+guards them against drift. `webui.py` holds the Flask helpers shared by the
+three web UIs; `import lib_safety` does not load it, so it stays Flask-free.
 
 ## Invariants
 

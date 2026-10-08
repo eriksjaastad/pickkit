@@ -35,6 +35,7 @@ safety_batch = importlib.import_module("lib_safety.batch")
 safety_companions = importlib.import_module("lib_safety.companions")
 safety_guards = importlib.import_module("lib_safety.guards")
 safety_trash = importlib.import_module("lib_safety.trash")
+safety_webui = importlib.import_module("lib_safety.webui")
 
 #: Every module whose docstring carries a "Public API" section.
 #: ``lib_safety.errors`` is intentionally absent: it has no Public API section.
@@ -44,6 +45,7 @@ DOCUMENTED_MODULES = (
     safety_companions,
     safety_guards,
     safety_trash,
+    safety_webui,
     intake,
     review,
     review_ui,

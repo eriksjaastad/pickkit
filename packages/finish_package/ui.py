@@ -139,6 +139,9 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
+from lib_safety import rel_path
+from lib_safety.webui import require_intaked_root, run_app
+
 from .finish import (
     DEFAULT_ZIP_NAME,
     EXCLUDED_BUCKETS,
@@ -146,6 +149,7 @@ from .finish import (
     MANIFEST_NAME,
     PICKKIT_DIR_NAME,
     FinishLogError,
+    FinishResult,
     ManifestError,
     classify_file,
     default_content_roots,
@@ -164,36 +168,6 @@ DEFAULT_PORT = 8767
 SAMPLE_LIMIT = 20
 
 
-def _rel(root: Path, path: Path) -> str:
-    """Return *path* relative to *root* (POSIX style) when it is under it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _require_intaked_root(batch_root: str | Path) -> Path:
-    """Resolve *batch_root* and refuse anything that is not intake'd.
-
-    Mirrors the refusal path of :func:`finish_package.finish.finish_package`:
-    the root must exist, be a directory, and contain
-    ``.pickkit/project.json``.
-    """
-    root = Path(batch_root).expanduser()
-    if not root.exists():
-        raise FileNotFoundError(f"batch root not found: {root}")
-    if not root.is_dir():
-        raise NotADirectoryError(f"batch root is not a directory: {root}")
-    root = root.resolve()
-    manifest_path = root / PICKKIT_DIR_NAME / MANIFEST_NAME
-    if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"batch is not intake'd: missing manifest {manifest_path}; "
-            f"run pickkit-intake first"
-        )
-    return root
-
-
 def planned_zip_path(
     batch_root: str | Path, output_zip: str | Path | None = None
 ) -> Path:
@@ -203,7 +177,7 @@ def planned_zip_path(
     *output_zip* overrides it with the same resolution the engine uses
     (relative paths under the batch root, absolute paths allowed).
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     if output_zip is None:
         return root / DEFAULT_ZIP_NAME
     candidate = Path(output_zip).expanduser()
@@ -222,7 +196,7 @@ def content_roots_for_ui(
     Outside / missing / non-directory overrides are refused the same way the
     engine refuses them.
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     if content is None:
         return default_content_roots(root)
     candidate = Path(content).expanduser()
@@ -251,7 +225,7 @@ def sample_paths(
     intake allowlist via :func:`load_allowlist`), so the UI never reimplements
     allow/ban rules. Each list is capped at *limit* entries.
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     allowed = load_allowlist(root / PICKKIT_DIR_NAME / INVENTORY_NAME)
     eligible: list[str] = []
     excluded: list[str] = []
@@ -262,9 +236,9 @@ def sample_paths(
             category = classify_file(path, root, allowed=allowed)
             if category == "eligible":
                 if len(eligible) < limit:
-                    eligible.append(_rel(root, path))
+                    eligible.append(rel_path(root, path))
             elif len(excluded) < limit:
-                excluded.append(_rel(root, path))
+                excluded.append(rel_path(root, path))
             if len(eligible) >= limit and len(excluded) >= limit:
                 return {"eligible": eligible, "excluded": excluded}
     return {"eligible": eligible, "excluded": excluded}
@@ -298,7 +272,7 @@ def create_app(batch_root: str | Path) -> Flask:
     Every report is re-derived from disk on each request; the engine runs
     behind every dry-run and commit.
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     app = Flask(__name__)
     app.config["BATCH_ROOT"] = root
 
@@ -321,6 +295,7 @@ def create_app(batch_root: str | Path) -> Flask:
     def bad_value(exc: ValueError):
         """JSON for other expected engine errors, including a bad inventory.
 
+        The request-body checks below raise ``ValueError`` to reach it too.
         ``ManifestError`` is a ``ValueError`` and keeps its own handler.
         A malformed allowlist used to be caught on ``GET /`` and shown in
         the page; without this handler that request is an HTML 500 while
@@ -345,37 +320,56 @@ def create_app(batch_root: str | Path) -> Flask:
             "by_ext_included": result.by_ext_included,
             "excluded_counts": result.excluded_counts,
             "incoming_by_ext": result.incoming_by_ext,
-            "planned_zip": _rel(root, planned),
-            "content_roots": [_rel(root, path) for path in roots],
+            "planned_zip": rel_path(root, planned),
+            "content_roots": [rel_path(root, path) for path in roots],
             "samples": sample_paths(root, content),
             "committed": finished_at is not None,
             "finished_at": finished_at,
             "zip_exists": planned.is_file(),
         }
 
-    def _optional_json_body() -> dict[str, object] | None:
-        """Return the JSON object body, ``{}`` for an empty body, else ``None``.
+    def _json_body(error: str) -> dict[str, object]:
+        """Return the JSON object body, or ``{}`` for an empty body.
 
-        An empty body is allowed (the form always sends ``{}`` or overrides);
-        a non-empty, non-object body is rejected by the caller with 400.
+        An empty body is allowed (the form always sends ``{}`` or overrides).
+        Any other non-object body raises :class:`ValueError` with *error*,
+        which the ``ValueError`` handler above answers with a 400.
         """
         if request.get_data() == b"":
             return {}
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
-            return None
+            raise ValueError(error)
         return payload
 
-    def dry_run_response(
-        content: str | None, output: str | None
-    ):
-        """Run the dry-run payload and map engine errors to status codes."""
-        try:
-            return jsonify(report_payload(content, output))
-        except FileNotFoundError as exc:
-            return jsonify({"error": str(exc)}), 404
-        except (NotADirectoryError, ValueError) as exc:
-            return jsonify({"error": str(exc)}), 400
+    def _overrides(body: dict[str, object]) -> tuple[str | None, str | None]:
+        """Return the ``content`` / ``output`` overrides, ``None`` when blank.
+
+        A value that is neither a string nor null raises :class:`ValueError`
+        (a 400 through the handler above).
+        """
+        content = body.get("content")
+        output = body.get("output")
+        if content is not None and not isinstance(content, str):
+            raise ValueError("'content' must be a string or null")
+        if output is not None and not isinstance(output, str):
+            raise ValueError("'output' must be a string or null")
+        return content or None, output or None
+
+    def _zip_rel(result: FinishResult) -> str | None:
+        """The committed ZIP path relative to the batch root, or ``None``."""
+        if result.zip_path is None:
+            return None
+        return rel_path(root, result.zip_path)
+
+    def _committed_error(error: str, result: FinishResult):
+        """JSON 500 for a commit whose ZIP and manifest close already succeeded."""
+        return jsonify({
+            "error": error,
+            "committed": result.finished_at is not None,
+            "finished_at": result.finished_at,
+            "zip_path": _zip_rel(result),
+        }), 500
 
     @app.get("/")
     def index() -> str:
@@ -406,43 +400,27 @@ def create_app(batch_root: str | Path) -> Flask:
 
     @app.get("/api/status")
     def api_status():
-        return dry_run_response(
-            request.args.get("content"), request.args.get("output")
+        return jsonify(
+            report_payload(request.args.get("content"), request.args.get("output"))
         )
 
     @app.post("/api/refresh")
     def api_refresh():
-        body = _optional_json_body()
-        if body is None:
-            return jsonify(
-                {"error": "JSON body must be an object with optional 'content' and 'output'"}
-            ), 400
-        content = body.get("content")
-        output = body.get("output")
-        if content is not None and not isinstance(content, str):
-            return jsonify({"error": "'content' must be a string or null"}), 400
-        if output is not None and not isinstance(output, str):
-            return jsonify({"error": "'output' must be a string or null"}), 400
-        return dry_run_response(content or None, output or None)
+        body = _json_body(
+            "JSON body must be an object with optional 'content' and 'output'"
+        )
+        content, output = _overrides(body)
+        return jsonify(report_payload(content, output))
 
     @app.post("/api/commit")
     def api_commit():
-        body = _optional_json_body()
-        if body is None:
-            return jsonify(
-                {"error": "JSON body must be an object with optional 'force', 'content', and 'output'"}
-            ), 400
+        body = _json_body(
+            "JSON body must be an object with optional 'force', 'content', and 'output'"
+        )
         force = body.get("force", False)
         if not isinstance(force, bool):
-            return jsonify({"error": "'force' must be a boolean"}), 400
-        content = body.get("content")
-        output = body.get("output")
-        if content is not None and not isinstance(content, str):
-            return jsonify({"error": "'content' must be a string or null"}), 400
-        if output is not None and not isinstance(output, str):
-            return jsonify({"error": "'output' must be a string or null"}), 400
-        content = content or None
-        output = output or None
+            raise ValueError("'force' must be a boolean")
+        content, output = _overrides(body)
 
         try:
             result = finish_package(
@@ -454,15 +432,7 @@ def create_app(batch_root: str | Path) -> Flask:
             )
         except FinishLogError as exc:
             # ZIP and manifest close already finished. The log write failed.
-            result = exc.result
-            return jsonify({
-                "error": str(exc),
-                "committed": result.finished_at is not None,
-                "finished_at": result.finished_at,
-                "zip_path": (
-                    _rel(root, result.zip_path) if result.zip_path is not None else None
-                ),
-            }), 500
+            return _committed_error(str(exc), exc.result)
         except FileExistsError as exc:  # includes RefusedWriteError
             return jsonify({"error": str(exc), "committed": False}), 409
         except FileNotFoundError as exc:
@@ -476,22 +446,12 @@ def create_app(batch_root: str | Path) -> Flask:
         except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
             # ZIP and manifest close already succeeded. Say so in JSON
             # instead of an HTML 500 that looks like nothing was committed.
-            return jsonify({
-                "error": (
-                    "committed, but the batch summary could not be re-read: "
-                    f"{exc}"
-                ),
-                "committed": result.finished_at is not None,
-                "finished_at": result.finished_at,
-                "zip_path": (
-                    _rel(root, result.zip_path) if result.zip_path is not None else None
-                ),
-            }), 500
+            return _committed_error(
+                f"committed, but the batch summary could not be re-read: {exc}",
+                result,
+            )
 
-        payload = dict(payload)
-        payload["zip_path"] = (
-            _rel(root, result.zip_path) if result.zip_path is not None else None
-        )
+        payload["zip_path"] = _zip_rel(result)
         payload["finished_at"] = result.finished_at
         payload["committed"] = result.finished_at is not None
         payload["zip_exists"] = (
@@ -509,8 +469,11 @@ def run_ui(
     port: int = DEFAULT_PORT,
 ) -> None:
     """Validate *batch_root* and start the Flask finish wizard on ``host:port``."""
-    root = _require_intaked_root(batch_root)
-    app = create_app(root)
-    print(f"pickkit finish UI: http://{host}:{port}  (batch: {root})")
-    print("Preview the eligible/excluded report, then Commit ZIP. Ctrl+C stops the server.")
-    app.run(host=host, port=port, debug=False)
+    run_app(
+        create_app,
+        batch_root,
+        title="finish",
+        hint="Preview the eligible/excluded report, then Commit ZIP. Ctrl+C stops the server.",
+        host=host,
+        port=port,
+    )

@@ -342,11 +342,12 @@ def _assert_manifest_error_json(
     return body
 
 
-# Manifest read failures take three paths through the app: ``/api/status``
-# and ``/api/refresh`` share ``dry_run_response``; ``GET /`` relies on the
-# app-level error handlers; ``POST /api/commit`` has its own except clauses.
-# Each distinct message is checked once on ``/api/status``; the other two
-# paths are checked once per status code they map.
+# Manifest read failures take two paths through the app: ``/api/status``,
+# ``/api/refresh`` and ``GET /`` all go through the app-level error handlers;
+# ``POST /api/commit`` has its own except clauses. Each distinct message is
+# checked once on ``/api/status``; commit is checked once per status code it
+# maps. ``GET /`` reaching the handlers is checked by
+# ``test_index_returns_json_for_a_bad_inventory``.
 
 
 @pytest.mark.parametrize("kind,status,message", [
@@ -380,22 +381,6 @@ def test_status_reports_an_unreadable_manifest_as_json(tmp_path: Path) -> None:
         _assert_manifest_error_json(response, manifest, 400, "cannot read manifest")
     finally:
         manifest.chmod(0o644)
-
-
-@pytest.mark.parametrize("kind,status,message", [
-    ("missing", 404, "missing manifest"),  # the FileNotFoundError handler
-    ("bad_json", 400, "not valid JSON"),  # the ManifestError handler
-])
-def test_index_page_returns_json_not_html_for_a_bad_manifest(
-    tmp_path: Path, kind: str, status: int, message: str
-) -> None:
-    root = stage_selected_batch(tmp_path)
-    client = ui.create_app(root).test_client()
-    manifest = _break_manifest(root, kind)
-
-    page = client.get("/")
-
-    _assert_manifest_error_json(page, manifest, status, message)
 
 
 @pytest.mark.parametrize("kind,status,message", [
