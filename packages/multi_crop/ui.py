@@ -60,9 +60,7 @@ Public API
     relative POSIX path, stable), excluding images whose default destination
     ``__cropped/<same name>`` already exists.
 ``safe_image_path(batch_root, rel_or_name)``
-    Resolve *rel_or_name* under *batch_root* and return the absolute
-    :class:`pathlib.Path`. Refuses ``..`` escapes and absolute paths outside
-    the root with :class:`ValueError`.
+    Re-exported from :mod:`lib_safety.webui`, which documents it.
 ``create_app(batch_root, *, session_cropped=None)``
     Build the Flask app for *batch_root*. ``session_cropped`` seeds the
     in-memory cropped counter (default ``0``).

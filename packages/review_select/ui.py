@@ -59,9 +59,7 @@ Public API
     synonyms ``keep``/``crop``/``reject``. Unknown tokens are refused with
     :class:`ValueError`.
 ``safe_image_path(batch_root, rel_or_name)``
-    Resolve *rel_or_name* under *batch_root* and return the absolute
-    :class:`pathlib.Path`. Refuses ``..`` escapes and absolute paths outside
-    the root with :class:`ValueError`.
+    Re-exported from :mod:`lib_safety.webui`, which documents it.
 ``create_app(batch_root, *, session_decided=None)``
     Build the Flask app for *batch_root*. ``session_decided`` seeds the
     in-memory decided counter (default ``0``).

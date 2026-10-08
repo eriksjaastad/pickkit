@@ -94,33 +94,6 @@ def test_list_pending_images_refuses_non_intaked_batch(tmp_path: Path) -> None:
         ui.list_pending_images(root)
 
 
-# --- safe_image_path --------------------------------------------------------
-
-
-def test_safe_image_path_resolves_relative_and_in_root_absolute(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "batch"
-    root.mkdir()
-    image = root / "img.png"
-    image.write_bytes(b"x")
-
-    assert ui.safe_image_path(root, "img.png") == image.resolve()
-    assert ui.safe_image_path(root, str(image)) == image.resolve()
-
-
-def test_safe_image_path_refuses_dotdot_and_absolute_escapes(tmp_path: Path) -> None:
-    root = tmp_path / "batch"
-    root.mkdir()
-    outside = tmp_path / "outside.png"
-    outside.write_bytes(b"x")
-
-    with pytest.raises(ValueError, match="escapes batch root"):
-        ui.safe_image_path(root, "../outside.png")
-    with pytest.raises(ValueError, match="escapes batch root"):
-        ui.safe_image_path(root, str(outside))
-
-
 # --- Flask app --------------------------------------------------------------
 
 
