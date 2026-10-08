@@ -37,8 +37,7 @@ from character_tools import (
 )
 from lib_safety import AuditEvent, DestinationExistsError
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import BATCH_A, read_json, stage_batch_a
 
 
 class RecordingHook:
@@ -49,17 +48,6 @@ class RecordingHook:
 
     def record(self, event: AuditEvent) -> None:
         self.events.append(event)
-
-
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # --- list_images -------------------------------------------------------------
@@ -457,7 +445,7 @@ def test_no_spine_manifest_mutation_with_fake_project_json(tmp_path: Path) -> No
     assign_batch([(root / "img_002.png", "bob")], bins_root=bins_root, commit=True)
 
     assert manifest_path.read_bytes() == before
-    assert _read_json(manifest_path)["finished_at"] is None
+    assert read_json(manifest_path)["finished_at"] is None
     assert sorted(path.name for path in pickkit_dir.iterdir()) == ["project.json"]
 
 

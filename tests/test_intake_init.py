@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from pathlib import Path
 
 import pytest
@@ -20,8 +19,8 @@ from intake_init import (
 )
 from lib_safety import AuditEvent
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import read_json, stage_batch_a
+
 
 #: ``.pickkit.bak.20260926T192530Z`` — compact UTC, sibling of ``.pickkit/``.
 BACKUP_NAME_RE = re.compile(r"\.pickkit\.bak\.\d{8}T\d{6}Z")
@@ -37,23 +36,12 @@ class RecordingHook:
         self.events.append(event)
 
 
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def test_intake_writes_manifest_with_expected_keys(tmp_path: Path) -> None:
     root = stage_batch_a(tmp_path)
 
     result = intake_init(root)
 
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     assert manifest["schema_version"] == 2
     assert manifest["started_at"].endswith("Z")
     assert manifest["finished_at"] is None
@@ -115,7 +103,7 @@ def test_inventory_snapshot_is_allowlist_ready(tmp_path: Path) -> None:
 
     result = intake_init(root)
 
-    inventory = _read_json(root / ".pickkit" / "allowed_ext.json")
+    inventory = read_json(root / ".pickkit" / "allowed_ext.json")
     assert inventory["snapshot_at"].endswith("Z")
     assert inventory["source_path"] == str(root.resolve())
     assert inventory["extensions"] == {"png": 4, "txt": 2, "yaml": 3}
@@ -141,7 +129,7 @@ def test_audit_baseline_records_intake_event(tmp_path: Path) -> None:
 def test_second_intake_backs_up_then_overwrites(tmp_path: Path) -> None:
     root = stage_batch_a(tmp_path)
     first = intake_init(root)
-    original_manifest = _read_json(first.manifest_path)
+    original_manifest = read_json(first.manifest_path)
     hook = RecordingHook()
 
     second = intake_init(root, hook=hook)
@@ -156,12 +144,12 @@ def test_second_intake_backs_up_then_overwrites(tmp_path: Path) -> None:
     # The old .pickkit is preserved whole under the timestamped sibling.
     backup_manifest = second.backup_path / "project.json"
     assert backup_manifest.exists()
-    assert _read_json(backup_manifest) == original_manifest
+    assert read_json(backup_manifest) == original_manifest
     assert (second.backup_path / "allowed_ext.json").exists()
     assert (second.backup_path / "audit.jsonl").exists()
 
     # The new .pickkit is written fresh.
-    fresh = _read_json(second.manifest_path)
+    fresh = read_json(second.manifest_path)
     assert fresh["schema_version"] == 2
     assert fresh["root"] == str(root.resolve())
     assert fresh["started_at"].endswith("Z")

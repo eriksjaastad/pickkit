@@ -33,19 +33,7 @@ from directory_viewer import (
     main,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
-
-
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+from conftest import BATCH_A, read_json, stage_batch_a
 
 
 # --- locked defaults ----------------------------------------------------------
@@ -313,7 +301,7 @@ def test_no_spine_manifest_mutation(tmp_path: Path) -> None:
     compare_roots([root])
 
     assert manifest_path.read_bytes() == before
-    assert _read_json(manifest_path)["finished_at"] is None
+    assert read_json(manifest_path)["finished_at"] is None
     assert sorted(path.name for path in pickkit_dir.iterdir()) == ["project.json"]
 
 

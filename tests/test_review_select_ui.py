@@ -8,7 +8,6 @@ committed sandbox is never mutated. No real browser is required.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -27,24 +26,7 @@ from review_select import (
 )
 from review_select import ui
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
-
-
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
-def _snapshot(directory: Path) -> dict[str, bytes]:
-    """Relative path -> bytes for every file under *directory*."""
-    return {
-        str(path.relative_to(directory)): path.read_bytes()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
+from conftest import BATCH_A, snapshot, stage_batch_a
 
 
 # --- list_pending_images ----------------------------------------------------
@@ -280,14 +262,14 @@ def test_image_route_serves_original_bytes_and_refuses_escapes(
 
 
 def test_ui_never_mutates_committed_sandbox(tmp_path: Path) -> None:
-    before = _snapshot(BATCH_A)
+    before = snapshot(BATCH_A)
 
     root = stage_batch_a(tmp_path)
     intake_init(root)
     client = ui.create_app(root).test_client()
     client.post("/api/decide", json={"source": "img_001.png", "action": "keep"})
 
-    assert _snapshot(BATCH_A) == before
+    assert snapshot(BATCH_A) == before
 
 
 # --- CLI wiring -------------------------------------------------------------

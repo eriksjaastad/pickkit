@@ -35,8 +35,7 @@ from finish_package import (
 from intake_init import intake_init
 from lib_safety import AuditEvent, RefusedWriteError
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import BATCH_A, jsonl_lines, read_json, snapshot, stage_batch_a
 
 
 class RecordingHook:
@@ -47,13 +46,6 @@ class RecordingHook:
 
     def record(self, event: AuditEvent) -> None:
         self.events.append(event)
-
-
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
 
 
 def arrange_content(root: Path) -> dict[str, Path]:
@@ -102,31 +94,8 @@ def arrange_content(root: Path) -> dict[str, Path]:
     return paths
 
 
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _jsonl_lines(path: Path) -> list[dict[str, object]]:
-    if not path.is_file():
-        return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-
-
-def _snapshot(directory: Path) -> dict[str, bytes]:
-    """Relative path -> bytes for every file under *directory*."""
-    return {
-        str(path.relative_to(directory)): path.read_bytes()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
-
-
 def _finish_step(root: Path) -> dict[str, object]:
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     for step in manifest["steps"]:
         if step["name"] == "finish_package":
             return step
@@ -139,7 +108,7 @@ def _zip_names(root: Path) -> list[str]:
 
 
 def _stager(root: Path) -> dict[str, object]:
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     return manifest["metrics"]["stager"]
 
 
@@ -151,7 +120,7 @@ def test_dry_run_writes_nothing_and_reports_exclusions(tmp_path: Path) -> None:
     intake_init(root)
     arrange_content(root)
     hook = RecordingHook()
-    source_snapshot = _snapshot(root)
+    source_snapshot = snapshot(root)
 
     result = finish_package(root, hook=hook)
 
@@ -182,7 +151,7 @@ def test_dry_run_writes_nothing_and_reports_exclusions(tmp_path: Path) -> None:
     # Nothing written: no ZIP, no finish.jsonl, no manifest/audit changes.
     assert not (root / DEFAULT_ZIP_NAME).exists()
     assert not (root / ".pickkit" / FINISH_LOG_NAME).exists()
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     assert manifest["finished_at"] is None
     assert manifest["metrics"]["stager"] == {
         "zip": "",
@@ -195,7 +164,7 @@ def test_dry_run_writes_nothing_and_reports_exclusions(tmp_path: Path) -> None:
     assert step["started_at"] is None
     assert step["finished_at"] is None
     assert step["images_processed"] is None
-    assert [e["operation"] for e in _jsonl_lines(root / ".pickkit" / "audit.jsonl")] == [
+    assert [e["operation"] for e in jsonl_lines(root / ".pickkit" / "audit.jsonl")] == [
         "intake_init"
     ]
 
@@ -203,7 +172,7 @@ def test_dry_run_writes_nothing_and_reports_exclusions(tmp_path: Path) -> None:
     assert [e.operation for e in hook.events] == ["finish_package"]
     assert hook.events[0].ok is True
     assert "dry_run" in (hook.events[0].reason or "")
-    assert _snapshot(root) == source_snapshot
+    assert snapshot(root) == source_snapshot
 
 
 # --- commit -----------------------------------------------------------------
@@ -243,7 +212,7 @@ def test_commit_writes_zip_members_manifest_and_audit(tmp_path: Path) -> None:
             assert archive.read(name) == (root / name).read_bytes()
 
     # Manifest closed: finished_at, finish_package step, metrics.stager.
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     assert manifest["finished_at"] == result.finished_at
     step = _finish_step(root)
     assert step["started_at"] == result.finished_at
@@ -265,11 +234,11 @@ def test_commit_writes_zip_members_manifest_and_audit(tmp_path: Path) -> None:
 
     # Audit + finish log.
     audit_ops = [
-        e["operation"] for e in _jsonl_lines(root / ".pickkit" / "audit.jsonl")
+        e["operation"] for e in jsonl_lines(root / ".pickkit" / "audit.jsonl")
     ]
     assert audit_ops == ["intake_init", "finish_package"]
     assert [e.operation for e in hook.events] == ["finish_package"]
-    finish_lines = _jsonl_lines(root / ".pickkit" / FINISH_LOG_NAME)
+    finish_lines = jsonl_lines(root / ".pickkit" / FINISH_LOG_NAME)
     assert len(finish_lines) == 1
     assert finish_lines[0]["eligible_count"] == 5
     assert finish_lines[0]["zip"] == DEFAULT_ZIP_NAME
@@ -282,7 +251,7 @@ def test_commit_sources_byte_unchanged(tmp_path: Path) -> None:
     paths = arrange_content(root)
     before = {
         key: value
-        for key, value in _snapshot(root).items()
+        for key, value in snapshot(root).items()
         if not key.startswith(".pickkit/")
     }
 
@@ -292,7 +261,7 @@ def test_commit_sources_byte_unchanged(tmp_path: Path) -> None:
     # the additive delivery ZIP and the .pickkit state change.
     after = {
         key: value
-        for key, value in _snapshot(root).items()
+        for key, value in snapshot(root).items()
         if not key.startswith(".pickkit/")
     }
     for key, value in before.items():
@@ -316,12 +285,12 @@ def test_existing_zip_refuses_without_force(tmp_path: Path) -> None:
         finish_package(root, commit=True)
 
     assert zip_path.read_bytes() == b"occupied delivery.zip"
-    assert _read_json(root / ".pickkit" / "project.json")["finished_at"] is None
+    assert read_json(root / ".pickkit" / "project.json")["finished_at"] is None
     assert _finish_step(root)["finished_at"] is None
     assert not (root / ".pickkit" / FINISH_LOG_NAME).exists()
     # The refusal is audited through the batch audit JSONL.
     audit_ops = [
-        e["operation"] for e in _jsonl_lines(root / ".pickkit" / "audit.jsonl")
+        e["operation"] for e in jsonl_lines(root / ".pickkit" / "audit.jsonl")
     ]
     assert audit_ops == ["intake_init", "refuse_write"]
 
@@ -342,7 +311,7 @@ def test_force_overwrites_zip_only(tmp_path: Path) -> None:
     assert zip_path.read_bytes() != b"old zip bytes"
     assert _zip_names(root)[0].startswith(f"{CROPPED_DIR_NAME}/")
     assert all(path.read_bytes() == sources_before[key] for key, path in paths.items())
-    assert _read_json(root / ".pickkit" / "project.json")["finished_at"] is not None
+    assert read_json(root / ".pickkit" / "project.json")["finished_at"] is not None
 
 
 def test_force_refuses_to_overwrite_a_source_file(tmp_path: Path) -> None:
@@ -508,7 +477,7 @@ def test_cli_dry_run_and_commit_summaries(
     assert "wrote zip" in out
     assert str(root / DEFAULT_ZIP_NAME) in out
     assert (root / DEFAULT_ZIP_NAME).is_file()
-    assert _read_json(root / ".pickkit" / "project.json")["finished_at"] is not None
+    assert read_json(root / ".pickkit" / "project.json")["finished_at"] is not None
 
 
 def test_cli_refuse_exits_nonzero(

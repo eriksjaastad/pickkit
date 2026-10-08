@@ -44,8 +44,7 @@ from duplicate_finder import (
 )
 from lib_safety import AuditEvent
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import BATCH_A, read_json, stage_batch_a
 
 
 class RecordingHook:
@@ -58,13 +57,6 @@ class RecordingHook:
         self.events.append(event)
 
 
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
 def make_dup_pair(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Stage batch_a plus a copied image + companion; return (root, keep, drop)."""
     root = stage_batch_a(tmp_path)
@@ -73,10 +65,6 @@ def make_dup_pair(tmp_path: Path) -> tuple[Path, Path, Path]:
     shutil.copy(keeper, drop)
     shutil.copy(root / "img_001.yaml", root / "zzz_dup.yaml")
     return root, keeper, drop
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # --- locked defaults ----------------------------------------------------------
@@ -412,7 +400,7 @@ def test_no_spine_manifest_mutation(tmp_path: Path) -> None:
     thin_groups([group], commit=True)
 
     assert manifest_path.read_bytes() == before
-    assert _read_json(manifest_path)["finished_at"] is None
+    assert read_json(manifest_path)["finished_at"] is None
     assert sorted(path.name for path in pickkit_dir.iterdir()) == ["project.json"]
 
 

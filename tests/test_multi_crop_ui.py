@@ -7,7 +7,6 @@ committed sandbox is never mutated. No real browser is required.
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
@@ -24,15 +23,7 @@ from multi_crop import (
 )
 from multi_crop import ui
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
-
-
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
+from conftest import BATCH_A, jsonl_lines, snapshot, stage_batch_a
 
 
 def stage_crop_queue(tmp_path: Path) -> Path:
@@ -44,25 +35,6 @@ def stage_crop_queue(tmp_path: Path) -> Path:
     shutil.copy(BATCH_A / "img_001.png", crop_dir / "img_001.png")
     shutil.copy(BATCH_A / "img_002.png", crop_dir / "img_002.png")
     return root
-
-
-def _snapshot(directory: Path) -> dict[str, bytes]:
-    """Relative path -> bytes for every file under *directory*."""
-    return {
-        str(path.relative_to(directory)): path.read_bytes()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
-
-
-def _jsonl_lines(path: Path) -> list[dict[str, object]]:
-    if not path.is_file():
-        return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
 
 
 # --- list_pending_images ----------------------------------------------------
@@ -200,7 +172,7 @@ def test_flask_index_status_crop_and_image_route(tmp_path: Path) -> None:
     assert (root / CROPPED_DIR_NAME / "img_001.png").is_file()
     assert (root / CROP_QUEUE_DIR_NAME / "img_001.png").is_file()
 
-    records = _jsonl_lines(root / ".pickkit" / CROPS_LOG_NAME)
+    records = jsonl_lines(root / ".pickkit" / CROPS_LOG_NAME)
     assert len(records) == 1
     assert records[0]["source"] == f"{CROP_QUEUE_DIR_NAME}/img_001.png"
     assert records[0]["destination"] == f"{CROPPED_DIR_NAME}/img_001.png"
@@ -322,7 +294,7 @@ def test_image_route_refuses_escapes_and_missing_files(tmp_path: Path) -> None:
 
 
 def test_ui_never_mutates_committed_sandbox(tmp_path: Path) -> None:
-    before = _snapshot(BATCH_A)
+    before = snapshot(BATCH_A)
 
     root = stage_crop_queue(tmp_path)
     client = ui.create_app(root).test_client()
@@ -331,7 +303,7 @@ def test_ui_never_mutates_committed_sandbox(tmp_path: Path) -> None:
         json={"source": f"{CROP_QUEUE_DIR_NAME}/img_001.png", "box": [0, 0, 16, 16]},
     )
 
-    assert _snapshot(BATCH_A) == before
+    assert snapshot(BATCH_A) == before
 
 
 # --- CLI wiring -------------------------------------------------------------

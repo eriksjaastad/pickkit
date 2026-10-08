@@ -8,7 +8,6 @@ the committed sandbox is never mutated.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -29,8 +28,7 @@ from review_select import (
     main,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import BATCH_A, read_json, snapshot, stage_batch_a
 
 
 class RecordingHook:
@@ -43,17 +41,6 @@ class RecordingHook:
         self.events.append(event)
 
 
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def _decision_lines(root: Path) -> list[dict[str, object]]:
     path = root / ".pickkit" / "decisions.jsonl"
     return [
@@ -64,20 +51,11 @@ def _decision_lines(root: Path) -> list[dict[str, object]]:
 
 
 def _review_select_step(root: Path) -> dict[str, object]:
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     for step in manifest["steps"]:
         if step["name"] == "review_select":
             return step
     raise AssertionError("review_select step missing")
-
-
-def _snapshot(directory: Path) -> dict[str, bytes]:
-    """Relative path -> bytes for every file under *directory*."""
-    return {
-        str(path.relative_to(directory)): path.read_bytes()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
 
 
 # --- keep / crop / reject routing ------------------------------------------
@@ -316,7 +294,7 @@ def test_does_not_create_dest_dirs_until_needed(tmp_path: Path) -> None:
 
 
 def test_never_mutates_committed_sandbox(tmp_path: Path) -> None:
-    before = _snapshot(BATCH_A)
+    before = snapshot(BATCH_A)
 
     root = stage_batch_a(tmp_path)
     intake_init(root)
@@ -329,7 +307,7 @@ def test_never_mutates_committed_sandbox(tmp_path: Path) -> None:
         ],
     )
 
-    assert _snapshot(BATCH_A) == before
+    assert snapshot(BATCH_A) == before
 
 
 # --- audit ----------------------------------------------------------------
