@@ -134,10 +134,16 @@ from lib_safety import (
     AuditEvent,
     AuditHook,
     DestinationExistsError,
+    FanoutHook,
     JsonlAuditHook,
+    append_jsonl,
     find_companions,
+    find_step,
+    load_json_records,
     move_with_companions,
+    rel_path,
     require_new_file,
+    write_manifest,
 )
 from lib_safety.audit import utc_now
 
@@ -219,49 +225,15 @@ class ApplyResult:
     decisions_log_path: Path
 
 
-class _FanoutHook:
-    """Record one event to every wrapped hook (audit JSONL + caller hook)."""
-
-    def __init__(self, *hooks: AuditHook) -> None:
-        self._hooks = hooks
-
-    def record(self, event: AuditEvent) -> None:
-        for hook in self._hooks:
-            hook.record(event)
-
-
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
-def _rel(root: Path, path: Path) -> str:
-    """Return *path* relative to *root* (POSIX style) when it is under it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
-
-
 def _resolve_source(root: Path, source: str | Path) -> Path:
     """Resolve a decision source under *root*, refusing paths outside it."""
-    candidate = _as_path(source)
+    candidate = Path(source).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.resolve()
     if not resolved.is_relative_to(root):
         raise ValueError(f"decision source is outside batch root: {source}")
     return resolved
-
-
-def _find_review_select_step(
-    steps: list[object], manifest_path: Path
-) -> dict[str, object]:
-    for step in steps:
-        if isinstance(step, dict) and step.get("name") == REVIEW_SELECT_STEP_NAME:
-            return step
-    raise ValueError(
-        f"manifest has no '{REVIEW_SELECT_STEP_NAME}' step: {manifest_path}"
-    )
 
 
 def _plan_decisions(
@@ -302,12 +274,6 @@ def _plan_decisions(
     return planned
 
 
-def _append_jsonl(path: Path, record: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
-
-
 def apply_decisions(
     batch_root: str | Path,
     decisions: Iterable[Decision],
@@ -332,7 +298,7 @@ def apply_decisions(
     duplicate source, or existing destination aborts the whole call without
     creating destination directories.
     """
-    root = _as_path(batch_root)
+    root = Path(batch_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"batch root not found: {root}")
     if not root.is_dir():
@@ -348,16 +314,13 @@ def apply_decisions(
         )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    steps = manifest.get("steps")
-    if not isinstance(steps, list):
-        raise ValueError(f"manifest has no 'steps' list: {manifest_path}")
-    step = _find_review_select_step(steps, manifest_path)
+    step = find_step(manifest, REVIEW_SELECT_STEP_NAME, manifest_path)
 
     decisions = list(decisions)
     hook = hook or NULL_HOOK
     audit_path = pickkit_dir / AUDIT_NAME
     decisions_log_path = pickkit_dir / DECISIONS_LOG_NAME
-    fanout = _FanoutHook(JsonlAuditHook(audit_path), hook)
+    fanout = FanoutHook(JsonlAuditHook(audit_path), hook)
 
     # Pre-flight: validate everything before any directory or file changes.
     planned = _plan_decisions(root, decisions)
@@ -376,20 +339,20 @@ def apply_decisions(
         record: dict[str, object] = {
             "timestamp": decision.timestamp,
             "action": decision.action,
-            "source": _rel(root, source),
-            "destination": _rel(root, move_result.image),
-            "companions": [_rel(root, c) for c in move_result.companions],
+            "source": rel_path(root, source),
+            "destination": rel_path(root, move_result.image),
+            "companions": [rel_path(root, c) for c in move_result.companions],
         }
         if decision.note is not None:
             record["note"] = decision.note
-        _append_jsonl(decisions_log_path, record)
+        append_jsonl(decisions_log_path, record)
 
         fanout.record(
             AuditEvent(
                 operation=OPERATION,
                 source=str(source),
                 destination=str(move_result.image),
-                companions=tuple(_rel(root, c) for c in move_result.companions),
+                companions=tuple(rel_path(root, c) for c in move_result.companions),
                 ok=True,
                 reason=f"action={decision.action}",
             )
@@ -407,9 +370,7 @@ def apply_decisions(
         finished = True
 
     if applied:
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-        )
+        write_manifest(manifest_path, manifest)
 
     return ApplyResult(
         batch_root=root,
@@ -450,36 +411,7 @@ def load_decisions(path: str | Path) -> list[Decision]:
     Blank JSONL lines are skipped. Extra keys (such as the decision-log fields
     written by :func:`apply_decisions`) are ignored.
     """
-    decisions_file = _as_path(path)
-    if not decisions_file.is_file():
-        raise FileNotFoundError(f"decisions file not found: {decisions_file}")
-
-    if decisions_file.suffix.lower() == ".jsonl":
-        decisions: list[Decision] = []
-        for line_no, raw in enumerate(
-            decisions_file.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if not raw.strip():
-                continue
-            try:
-                record = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"invalid JSONL in {decisions_file} at line {line_no}: {exc}"
-                ) from exc
-            decisions.append(_record_to_decision(record, decisions_file, line_no))
-        return decisions
-
-    try:
-        data = json.loads(decisions_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid JSON in {decisions_file}: {exc}") from exc
-    if not isinstance(data, list):
-        raise ValueError(f"decisions file must contain a JSON array: {decisions_file}")
-    return [
-        _record_to_decision(record, decisions_file, index)
-        for index, record in enumerate(data, start=1)
-    ]
+    return load_json_records(path, "decisions file", _record_to_decision)
 
 
 def build_parser() -> argparse.ArgumentParser:

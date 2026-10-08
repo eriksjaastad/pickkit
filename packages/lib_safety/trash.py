@@ -63,10 +63,6 @@ from .audit import NULL_HOOK, AuditEvent, AuditHook
 from .companions import find_companions
 
 
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
 def trash(
     path: str | Path,
     *,
@@ -82,7 +78,7 @@ def trash(
     Raises :class:`FileNotFoundError` before trashing anything if any planned
     path does not exist.
     """
-    target = _as_path(path)
+    target = Path(path).expanduser()
     hook = hook or NULL_HOOK
 
     planned: list[Path] = []

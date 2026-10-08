@@ -234,7 +234,8 @@ from lib_safety import (
     NULL_HOOK,
     AuditEvent,
     AuditHook,
-    JsonlAuditHook,
+    normalise_suffix_set,
+    optional_jsonl_hook,
     trash,
 )
 
@@ -259,27 +260,6 @@ DEFAULT_KEEP_POLICY = "keep_first"
 #: Audit operation recorded for every thin action; ``reason`` distinguishes
 #: ``find_exact`` / ``find_near`` / ``thin; dry_run`` / ``thin; committed=True``.
 OPERATION = "duplicate_finder"
-
-
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
-def _normalise_suffix_set(suffixes: object) -> set[str]:
-    if suffixes is None:
-        raw: Iterable[str] = DEFAULT_IMAGE_SUFFIXES
-    elif isinstance(suffixes, str):
-        raw = (suffixes,)
-    else:
-        raw = tuple(suffixes)  # type: ignore[arg-type]
-    allowed: set[str] = set()
-    for suffix in raw:
-        lowered = suffix.lower()
-        if not lowered.startswith("."):
-            lowered = f".{lowered}"
-        if lowered != ".":
-            allowed.add(lowered)
-    return allowed
 
 
 def _validate_hash_size(hash_size: object) -> int:
@@ -309,10 +289,10 @@ def list_images(
     skipped, and results are sorted by path string. ``suffixes=None`` uses
     :data:`DEFAULT_IMAGE_SUFFIXES`.
     """
-    src = _as_path(source)
+    src = Path(source).expanduser()
     if not src.exists():
         raise FileNotFoundError(f"source not found: {src}")
-    allowed = _normalise_suffix_set(suffixes)
+    allowed = normalise_suffix_set(suffixes, DEFAULT_IMAGE_SUFFIXES)
 
     def _is_image(path: Path) -> bool:
         return path.is_file() and path.suffix.lower() in allowed
@@ -355,7 +335,7 @@ def _coerce_sources(sources: object) -> list[Path]:
             raise ValueError(
                 f"sources must be a path or a sequence of paths, got {sources!r}"
             ) from exc
-    return [_as_path(item) for item in raw]  # type: ignore[arg-type]
+    return [Path(item).expanduser() for item in raw]  # type: ignore[arg-type]
 
 
 def _collect_images(
@@ -383,7 +363,7 @@ def content_hash(path: str | Path) -> str:
     fully in memory. Raises :class:`FileNotFoundError` if *path* is not a
     file.
     """
-    target = _as_path(path)
+    target = Path(path).expanduser()
     if not target.is_file():
         raise FileNotFoundError(f"image not found: {target}")
     digest = hashlib.sha256()
@@ -404,7 +384,7 @@ def average_hash(path: str | Path, *, hash_size: int = HASH_SIZE) -> int:
     for a non-positive ``hash_size``.
     """
     size = _validate_hash_size(hash_size)
-    target = _as_path(path)
+    target = Path(path).expanduser()
     if not target.is_file():
         raise FileNotFoundError(f"image not found: {target}")
     with Image.open(target) as image:
@@ -542,7 +522,7 @@ def plan_thin(
     policy or a group with fewer than two paths.
     """
     policy = _validate_keep_policy(keep_policy)
-    resolved = tuple(_as_path(path).resolve() for path in group.paths)
+    resolved = tuple(Path(path).expanduser().resolve() for path in group.paths)
     if len(resolved) < 2:
         raise ValueError("a duplicate group must contain at least two paths")
     for path in resolved:
@@ -734,10 +714,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _audit_hook(path: str | None) -> AuditHook | None:
-    return JsonlAuditHook(path) if path else None
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point; parses args, dispatches, and prints JSON to stdout."""
     parser = build_parser()
@@ -760,7 +736,7 @@ def main(argv: list[str] | None = None) -> int:
                 "groups": [_group_dict(group) for group in groups],
             }
         elif args.command == "thin":
-            hook = _audit_hook(args.audit)
+            hook = optional_jsonl_hook(args.audit)
             if args.mode == "exact":
                 groups = find_exact_duplicates(args.dirs, recursive=args.recursive)
             else:
@@ -771,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
                 hook.record(
                     AuditEvent(
                         operation=OPERATION,
-                        source=", ".join(str(_as_path(d)) for d in args.dirs),
+                        source=", ".join(str(Path(d).expanduser()) for d in args.dirs),
                         ok=True,
                         reason=f"find_{args.mode}",
                     )

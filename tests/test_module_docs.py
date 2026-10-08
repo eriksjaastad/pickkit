@@ -31,6 +31,7 @@ import review_select.ui as review_ui
 # lib_safety re-exports functions named after its submodules (``trash``), so
 # ``import lib_safety.trash`` would bind the function. Load the modules.
 safety_audit = importlib.import_module("lib_safety.audit")
+safety_batch = importlib.import_module("lib_safety.batch")
 safety_companions = importlib.import_module("lib_safety.companions")
 safety_guards = importlib.import_module("lib_safety.guards")
 safety_trash = importlib.import_module("lib_safety.trash")
@@ -39,6 +40,7 @@ safety_trash = importlib.import_module("lib_safety.trash")
 #: ``lib_safety.errors`` is intentionally absent: it has no Public API section.
 DOCUMENTED_MODULES = (
     safety_audit,
+    safety_batch,
     safety_companions,
     safety_guards,
     safety_trash,

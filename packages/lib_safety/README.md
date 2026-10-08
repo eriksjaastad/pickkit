@@ -5,8 +5,9 @@ plugin: later plugins import these helpers instead of hand-rolling risky file
 operations.
 
 The authoritative behaviour references are the module docstrings of
-`packages/lib_safety/companions.py`, `trash.py`, `guards.py`, and `audit.py`;
-`tests/test_lib_safety_docs.py` guards them against drift.
+`packages/lib_safety/companions.py`, `trash.py`, `guards.py`, `audit.py`, and
+`batch.py` (helpers shared by the batch engines); `tests/test_module_docs.py`
+guards them against drift.
 
 ## Invariants
 

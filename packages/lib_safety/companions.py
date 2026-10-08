@@ -101,10 +101,6 @@ DEFAULT_COMPANION_SUFFIXES: tuple[str, ...] = (
 )
 
 
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
 def _normalise_suffixes(suffixes: object) -> tuple[str, ...] | None:
     if suffixes is None:
         return None
@@ -126,7 +122,7 @@ def find_companions(
     ``suffixes=None`` uses :data:`DEFAULT_COMPANION_SUFFIXES`; pass a
     string or iterable of suffixes to override it.
     """
-    image = _as_path(image_path)
+    image = Path(image_path).expanduser()
     wanted = _normalise_suffixes(suffixes)
     allowed = {s.lower() for s in (DEFAULT_COMPANION_SUFFIXES if wanted is None else wanted)}
     companions = [
@@ -183,14 +179,14 @@ def move_with_companions(
     location, not bytes. With ``hook`` given, one :class:`AuditEvent` is
     recorded on success or refusal.
     """
-    image = _as_path(image_path)
+    image = Path(image_path).expanduser()
     if not image.is_file():
         raise FileNotFoundError(f"image not found: {image}")
 
     hook = hook or NULL_HOOK
     companions = find_companions(image, suffixes=suffixes)
 
-    dest = _as_path(destination)
+    dest = Path(destination).expanduser()
     if dest.is_dir():
         destination_image = dest / image.name
         destination_companions = tuple(dest / c.name for c in companions)
