@@ -118,9 +118,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, render_template, request
 
 from intake_init import DEFAULT_IMAGE_SUFFIXES
+from lib_safety import rel_path
+from lib_safety.webui import (
+    require_intaked_root,
+    run_app,
+    safe_image_path,
+    send_batch_image,
+)
 from multi_crop.crop import CROPPED_DIR_NAME
 
 from .review import (
@@ -128,8 +135,6 @@ from .review import (
     CROP_DIR_NAME,
     KEEP,
     KEEP_DIR_NAME,
-    MANIFEST_NAME,
-    PICKKIT_DIR_NAME,
     REJECT,
     REJECT_DIR_NAME,
     Decision,
@@ -162,36 +167,6 @@ _UI_ACTION_TOKENS: dict[str, str] = {
 }
 
 
-def _rel(root: Path, path: Path) -> str:
-    """Return *path* relative to *root* (POSIX style) when it is under it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _require_intaked_root(batch_root: str | Path) -> Path:
-    """Resolve *batch_root* and refuse anything that is not intake'd.
-
-    Mirrors the refusal path of :func:`review_select.review.apply_decisions`:
-    the root must exist, be a directory, and contain
-    ``.pickkit/project.json``.
-    """
-    root = Path(batch_root).expanduser()
-    if not root.exists():
-        raise FileNotFoundError(f"batch root not found: {root}")
-    if not root.is_dir():
-        raise NotADirectoryError(f"batch root is not a directory: {root}")
-    root = root.resolve()
-    manifest_path = root / PICKKIT_DIR_NAME / MANIFEST_NAME
-    if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"batch is not intake'd: missing manifest {manifest_path}; "
-            f"run pickkit-intake first"
-        )
-    return root
-
-
 def list_pending_images(batch_root: str | Path) -> list[Path]:
     """Return the pending image queue for an intake'd *batch_root*.
 
@@ -201,7 +176,7 @@ def list_pending_images(batch_root: str | Path) -> list[Path]:
     (:data:`STAGE_DIR_NAMES`). Returns absolute :class:`pathlib.Path` objects
     sorted by relative POSIX path (stable).
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     pending: list[Path] = []
     for path in root.rglob("*"):
         if not path.is_file():
@@ -237,30 +212,6 @@ def map_ui_action(token: str) -> str:
     return action
 
 
-def safe_image_path(batch_root: str | Path, rel_or_name: str | Path) -> Path:
-    """Resolve *rel_or_name* under *batch_root*, refusing escapes.
-
-    Relative names resolve under the batch root; absolute paths must already
-    resolve under it. Symlinks are resolved, so a link pointing outside the
-    root is refused too. Raises :class:`ValueError` for anything outside the
-    root. This helper only resolves paths; it does not require the file to
-    exist or the batch to be intake'd.
-    """
-    root = Path(batch_root).expanduser()
-    if not root.is_dir():
-        raise ValueError(f"batch root is not a directory: {root}")
-    root = root.resolve()
-    candidate = Path(rel_or_name)
-    if candidate.is_absolute():
-        candidate = candidate.expanduser()
-    else:
-        candidate = root / candidate
-    resolved = candidate.resolve()
-    if not resolved.is_relative_to(root):
-        raise ValueError(f"path escapes batch root: {rel_or_name}")
-    return resolved
-
-
 def create_app(
     batch_root: str | Path,
     *,
@@ -272,7 +223,7 @@ def create_app(
     ``decided_this_session`` is kept in-memory on the app config (seeded by
     *session_decided*, default ``0``).
     """
-    root = _require_intaked_root(batch_root)
+    root = require_intaked_root(batch_root)
     app = Flask(__name__)
     app.config["BATCH_ROOT"] = root
     app.config["DECIDED_THIS_SESSION"] = int(session_decided or 0)
@@ -282,7 +233,7 @@ def create_app(
         return {
             "remaining": len(pending),
             "decided_this_session": app.config["DECIDED_THIS_SESSION"],
-            "current": _rel(root, pending[0]) if pending else None,
+            "current": rel_path(root, pending[0]) if pending else None,
         }
 
     @app.get("/")
@@ -295,7 +246,7 @@ def create_app(
             batch_name=root.name,
             remaining=len(pending),
             decided=app.config["DECIDED_THIS_SESSION"],
-            current=_rel(root, current_path) if current_path else None,
+            current=rel_path(root, current_path) if current_path else None,
             current_name=current_path.name if current_path else None,
         )
 
@@ -330,7 +281,7 @@ def create_app(
             return jsonify({"error": f"source not found: {source}"}), 404
 
         try:
-            apply_decisions(root, [Decision(_rel(root, image_path), action)])
+            apply_decisions(root, [Decision(rel_path(root, image_path), action)])
         except FileExistsError as exc:
             return jsonify({"error": str(exc)}), 409
         except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
@@ -343,13 +294,7 @@ def create_app(
 
     @app.get("/image/<path:rel>")
     def serve_image(rel: str):
-        try:
-            image_path = safe_image_path(root, rel)
-        except (ValueError, OSError):
-            abort(404)
-        if not image_path.is_file():
-            abort(404)
-        return send_file(image_path)
+        return send_batch_image(root, rel)
 
     return app
 
@@ -361,8 +306,11 @@ def run_ui(
     port: int = DEFAULT_PORT,
 ) -> None:
     """Validate *batch_root* and start the Flask review server on ``host:port``."""
-    root = _require_intaked_root(batch_root)
-    app = create_app(root)
-    print(f"pickkit review UI: http://{host}:{port}  (batch: {root})")
-    print("Keyboard: K/C/R or 1/2/3. Ctrl+C stops the server.")
-    app.run(host=host, port=port, debug=False)
+    run_app(
+        create_app,
+        batch_root,
+        title="review",
+        hint="Keyboard: K/C/R or 1/2/3. Ctrl+C stops the server.",
+        host=host,
+        port=port,
+    )

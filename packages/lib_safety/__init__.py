@@ -8,6 +8,8 @@ Submodule docstrings are the single source of truth for behaviour:
 * ``lib_safety.audit`` — audit events and hook interfaces.
 * ``lib_safety.batch`` — small helpers shared by the batch engines.
 * ``lib_safety.errors`` — exception types.
+* ``lib_safety.webui`` — Flask helpers shared by the web UIs. Not imported
+  here, so ``import lib_safety`` stays Flask-free.
 
 This package re-exports the public names listed in :data:`__all__` (see
 the tuple below) so plugins can import them from ``lib_safety`` directly.
