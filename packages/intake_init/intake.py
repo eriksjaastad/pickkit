@@ -200,10 +200,6 @@ class IntakeResult:
     backup_path: Path | None = None
 
 
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
 def _iter_visible_files(root: Path) -> Iterator[Path]:
     """Yield files under *root*, skipping any path with a hidden part."""
     for path in root.rglob("*"):
@@ -329,7 +325,7 @@ def intake_init(
     (``__selected`` / ``__crop``) are created. With ``hook`` given, events
     are also recorded there.
     """
-    root = _as_path(batch_root)
+    root = Path(batch_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"batch root not found: {root}")
     if not root.is_dir():

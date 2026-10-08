@@ -195,9 +195,11 @@ from lib_safety import (
     AuditEvent,
     AuditHook,
     DestinationExistsError,
-    JsonlAuditHook,
     find_companions,
+    load_json_records,
     move_with_companions,
+    normalise_suffix_set,
+    optional_jsonl_hook,
     trash,
 )
 
@@ -212,10 +214,6 @@ DEFAULT_IMAGE_SUFFIXES: tuple[str, ...] = (
 OPERATION = "character_tools"
 
 _BIN_NAME_RE = re.compile(r"[A-Za-z0-9 _.-]+\Z")
-
-
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
 
 
 def normalise_bin_name(name: str) -> str:
@@ -246,23 +244,6 @@ def normalise_bin_name(name: str) -> str:
     return normalised
 
 
-def _normalise_suffix_set(suffixes: object) -> set[str]:
-    if suffixes is None:
-        raw: Iterable[str] = DEFAULT_IMAGE_SUFFIXES
-    elif isinstance(suffixes, str):
-        raw = (suffixes,)
-    else:
-        raw = tuple(suffixes)  # type: ignore[arg-type]
-    allowed: set[str] = set()
-    for suffix in raw:
-        lowered = suffix.lower()
-        if not lowered.startswith("."):
-            lowered = f".{lowered}"
-        if lowered != ".":
-            allowed.add(lowered)
-    return allowed
-
-
 def list_images(source: str | Path, *, suffixes: object = None) -> list[Path]:
     """List image files from a source file or directory.
 
@@ -271,10 +252,10 @@ def list_images(source: str | Path, *, suffixes: object = None) -> list[Path]:
     names skipped, sorted by name. ``suffixes=None`` uses
     :data:`DEFAULT_IMAGE_SUFFIXES`.
     """
-    src = _as_path(source)
+    src = Path(source).expanduser()
     if not src.exists():
         raise FileNotFoundError(f"source not found: {src}")
-    allowed = _normalise_suffix_set(suffixes)
+    allowed = normalise_suffix_set(suffixes, DEFAULT_IMAGE_SUFFIXES)
     if src.is_file():
         return [src] if src.suffix.lower() in allowed else []
     if not src.is_dir():
@@ -312,13 +293,13 @@ def check_bins(bins_root: str | Path, *, suffixes: object = None) -> list[BinSum
     ``image_count`` 0, hidden subdirectories are skipped, and ``images`` holds
     sorted image basenames found directly inside each subdirectory.
     """
-    root = _as_path(bins_root)
+    root = Path(bins_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"bins root not found: {root}")
     if not root.is_dir():
         raise NotADirectoryError(f"bins root is not a directory: {root}")
     root = root.resolve()
-    allowed = _normalise_suffix_set(suffixes)
+    allowed = normalise_suffix_set(suffixes, DEFAULT_IMAGE_SUFFIXES)
 
     summaries: list[BinSummary] = []
     subdirs = [
@@ -413,8 +394,8 @@ def move_to_bin(
     paths, :class:`ValueError` for a bad bin name, and
     :class:`~lib_safety.DestinationExistsError` when any destination exists.
     """
-    source = _as_path(image)
-    root = _as_path(bins_root)
+    source = Path(image).expanduser()
+    root = Path(bins_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"bins root not found: {root}")
     if not root.is_dir():
@@ -499,7 +480,7 @@ def _coerce_assignments(
             coerced.append(item)
         elif isinstance(item, (tuple, list)) and len(item) == 2:
             source, bin_name = item
-            coerced.append(Assignment(source=_as_path(source), bin_name=bin_name))
+            coerced.append(Assignment(source=Path(source).expanduser(), bin_name=bin_name))
         else:
             raise ValueError(
                 f"assignment #{index} must be an Assignment or a "
@@ -522,7 +503,7 @@ def assign_batch(
     it stops and raises; dry-run validates every plan without moving, while
     commit keeps earlier successful moves when a later one fails.
     """
-    root = _as_path(bins_root)
+    root = Path(bins_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"bins root not found: {root}")
     if not root.is_dir():
@@ -575,7 +556,7 @@ def reject_image(
     ``lib_safety.trash(image, companions=True, hook=hook)`` so companions go
     first, then the image — no orphans are left behind.
     """
-    source = _as_path(image)
+    source = Path(image).expanduser()
     hook = hook or NULL_HOOK
     if not source.is_file():
         hook.record(
@@ -629,7 +610,7 @@ def _record_to_assignment(record: object, path: Path, index: int) -> Assignment:
         )
     if not isinstance(bin_name, str):
         raise ValueError(f"assignment #{index} in {path} must have a string 'bin'")
-    return Assignment(source=_as_path(source), bin_name=bin_name)
+    return Assignment(source=Path(source).expanduser(), bin_name=bin_name)
 
 
 def load_assignments(path: str | Path) -> list[Assignment]:
@@ -640,36 +621,7 @@ def load_assignments(path: str | Path) -> list[Assignment]:
     must have exactly the ``source`` and ``bin`` keys; blank JSONL lines are
     skipped and anything else is refused with :class:`ValueError`.
     """
-    map_path = _as_path(path)
-    if not map_path.is_file():
-        raise FileNotFoundError(f"assignments file not found: {map_path}")
-
-    if map_path.suffix.lower() == ".jsonl":
-        loaded: list[Assignment] = []
-        for line_no, raw in enumerate(
-            map_path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if not raw.strip():
-                continue
-            try:
-                record = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"invalid JSONL in {map_path} at line {line_no}: {exc}"
-                ) from exc
-            loaded.append(_record_to_assignment(record, map_path, line_no))
-        return loaded
-
-    try:
-        data = json.loads(map_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid JSON in {map_path}: {exc}") from exc
-    if not isinstance(data, list):
-        raise ValueError(f"assignments file must contain a JSON array: {map_path}")
-    return [
-        _record_to_assignment(record, map_path, index)
-        for index, record in enumerate(data, start=1)
-    ]
+    return load_json_records(path, "assignments file", _record_to_assignment)
 
 
 def _move_result_dict(result: MoveToBinResult) -> dict[str, object]:
@@ -778,10 +730,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _audit_hook(path: str | None) -> AuditHook | None:
-    return JsonlAuditHook(path) if path else None
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point; parses args, dispatches, and prints JSON to stdout."""
     parser = build_parser()
@@ -791,13 +739,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "list":
             images = list_images(args.source)
             summary: dict[str, object] = {
-                "source": str(_as_path(args.source)),
+                "source": str(Path(args.source).expanduser()),
                 "images": [str(path) for path in images],
             }
         elif args.command == "check":
             bins = check_bins(args.bins_root)
             summary = {
-                "bins_root": str(_as_path(args.bins_root)),
+                "bins_root": str(Path(args.bins_root).expanduser()),
                 "bins": [_bin_summary_dict(item) for item in bins],
             }
         elif args.command == "move":
@@ -807,7 +755,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.bin,
                     bins_root=args.bins_root,
                     commit=args.commit,
-                    hook=_audit_hook(args.audit),
+                    hook=optional_jsonl_hook(args.audit),
                 )
             )
         elif args.command == "assign":
@@ -816,7 +764,7 @@ def main(argv: list[str] | None = None) -> int:
                     load_assignments(args.map_path),
                     bins_root=args.bins_root,
                     commit=args.commit,
-                    hook=_audit_hook(args.audit),
+                    hook=optional_jsonl_hook(args.audit),
                 )
             )
         elif args.command == "reject":
@@ -824,7 +772,7 @@ def main(argv: list[str] | None = None) -> int:
                 reject_image(
                     args.image,
                     commit=args.commit,
-                    hook=_audit_hook(args.audit),
+                    hook=optional_jsonl_hook(args.audit),
                 )
             )
         else:  # pragma: no cover - argparse guarantees a known subcommand

@@ -245,9 +245,14 @@ from lib_safety import (
     NULL_HOOK,
     AuditEvent,
     AuditHook,
+    FanoutHook,
     JsonlAuditHook,
     RefusedWriteError,
+    append_jsonl,
+    find_step,
+    rel_path,
     require_new_file,
+    write_manifest,
 )
 from lib_safety.audit import utc_now
 
@@ -331,35 +336,6 @@ class FinishResult:
     finish_log_path: Path
 
 
-class _FanoutHook:
-    """Record one event to every wrapped hook (audit JSONL + caller hook)."""
-
-    def __init__(self, *hooks: AuditHook) -> None:
-        self._hooks = hooks
-
-    def record(self, event: AuditEvent) -> None:
-        for hook in self._hooks:
-            hook.record(event)
-
-
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
-def _rel(root: Path, path: Path) -> str:
-    """Return *path* relative to *root* (POSIX style) when it is under it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _append_jsonl(path: Path, record: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
-
-
 def _matches_banned_pattern(basename: str) -> bool:
     return any(regex.search(basename) for regex in _COMPILED_BANNED_PATTERNS)
 
@@ -395,7 +371,7 @@ def load_manifest(path: str | Path) -> dict[str, object]:
     a regular file, unreadable, not valid UTF-8, not valid JSON, or JSON that
     is not an object (``[]``, a number, a string, a bool, or ``null``).
     """
-    manifest_path = _as_path(path)
+    manifest_path = Path(path).expanduser()
     try:
         if manifest_path.is_dir():
             raise ManifestError(
@@ -438,7 +414,7 @@ def load_allowlist(path: str | Path) -> set[str]:
     :class:`FileNotFoundError` when *path* is missing and with
     :class:`ValueError` when ``allowedExtensions`` is not a list.
     """
-    inventory_path = _as_path(path)
+    inventory_path = Path(path).expanduser()
     if not inventory_path.is_file():
         raise FileNotFoundError(
             f"allowlist inventory not found: {inventory_path}; "
@@ -475,8 +451,8 @@ def classify_file(
     applying the documented order: hidden -> no_extension -> banned_ext ->
     banned_pattern -> not_allowed -> eligible.
     """
-    file_path = _as_path(path)
-    root = _as_path(batch_root)
+    file_path = Path(path).expanduser()
+    root = Path(batch_root).expanduser()
     try:
         parts = file_path.relative_to(root).parts
     except ValueError:
@@ -502,13 +478,13 @@ def default_content_roots(batch_root: str | Path) -> list[Path]:
     :data:`CROPPED_DIR_NAME`; missing roots are skipped. The returned list is
     ordered ``__selected`` then ``__cropped`` for deterministic scans.
     """
-    root = _as_path(batch_root).resolve()
+    root = Path(batch_root).expanduser().resolve()
     candidates = (root / SELECTED_DIR_NAME, root / CROPPED_DIR_NAME)
     return [path for path in candidates if path.is_dir()]
 
 
 def _resolve_content_override(root: Path, content: str | Path) -> Path:
-    candidate = _as_path(content)
+    candidate = Path(content).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.resolve()
@@ -524,7 +500,7 @@ def _resolve_content_override(root: Path, content: str | Path) -> Path:
 def _resolve_zip_path(root: Path, output_zip: str | Path | None) -> Path:
     if output_zip is None:
         return root / DEFAULT_ZIP_NAME
-    candidate = _as_path(output_zip)
+    candidate = Path(output_zip).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     return candidate.resolve()
@@ -570,24 +546,13 @@ def _scan(
             ext = path.suffix.lower().lstrip(".")
             incoming_by_ext[ext] = incoming_by_ext.get(ext, 0) + 1
 
-    eligible.sort(key=lambda p: _rel(batch_root, p))
+    eligible.sort(key=lambda p: rel_path(batch_root, p))
     return (
         eligible,
         dict(sorted(by_ext_included.items())),
         excluded_counts,
         dict(sorted(incoming_by_ext.items())),
         all_seen,
-    )
-
-
-def _find_finish_package_step(
-    steps: list[object], manifest_path: Path
-) -> dict[str, object]:
-    for step in steps:
-        if isinstance(step, dict) and step.get("name") == FINISH_PACKAGE_STEP_NAME:
-            return step
-    raise ValueError(
-        f"manifest has no '{FINISH_PACKAGE_STEP_NAME}' step: {manifest_path}"
     )
 
 
@@ -602,7 +567,7 @@ def _write_zip(zip_path: Path, batch_root: Path, eligible: list[Path]) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as archive:
         for path in eligible:
-            archive.write(path, arcname=_rel(batch_root, path))
+            archive.write(path, arcname=rel_path(batch_root, path))
 
 
 def _update_manifest(
@@ -616,10 +581,7 @@ def _update_manifest(
     incoming_by_ext: dict[str, int],
 ) -> None:
     manifest = load_manifest(manifest_path)
-    steps = manifest.get("steps")
-    if not isinstance(steps, list):
-        raise ValueError(f"manifest has no 'steps' list: {manifest_path}")
-    step = _find_finish_package_step(steps, manifest_path)
+    step = find_step(manifest, FINISH_PACKAGE_STEP_NAME, manifest_path)
 
     manifest["finished_at"] = finished_at
     if step.get("started_at") is None:
@@ -633,7 +595,7 @@ def _update_manifest(
     stager = metrics.get("stager")
     if not isinstance(stager, dict):
         stager = {}
-    stager["zip"] = _rel(root, zip_path)
+    stager["zip"] = rel_path(root, zip_path)
     stager["eligible_count"] = len(eligible)
     stager["by_ext_included"] = by_ext_included
     stager["excluded_counts"] = excluded_counts
@@ -641,7 +603,7 @@ def _update_manifest(
     metrics["stager"] = stager
     manifest["metrics"] = metrics
 
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_manifest(manifest_path, manifest)
 
 
 def finish_package(
@@ -676,7 +638,7 @@ def finish_package(
     close succeeded but the audit or finish log could not be written.
     ``force=True`` overwrites an existing ZIP only (never a scanned source).
     """
-    root = _as_path(batch_root)
+    root = Path(batch_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"batch root not found: {root}")
     if not root.is_dir():
@@ -735,7 +697,7 @@ def finish_package(
         )
 
     zip_path = _resolve_zip_path(root, output_zip)
-    fanout = _FanoutHook(JsonlAuditHook(audit_path), hook)
+    fanout = FanoutHook(JsonlAuditHook(audit_path), hook)
 
     if zip_path.exists():
         if not force:
@@ -785,11 +747,11 @@ def finish_package(
                 reason=f"commit=True; eligible_count={eligible_count}",
             )
         )
-        _append_jsonl(
+        append_jsonl(
             finish_log_path,
             {
                 "timestamp": finished_at,
-                "zip": _rel(root, zip_path),
+                "zip": rel_path(root, zip_path),
                 "eligible_count": eligible_count,
                 "committed": True,
             },

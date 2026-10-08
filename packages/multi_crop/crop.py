@@ -181,9 +181,15 @@ from lib_safety import (
     NULL_HOOK,
     AuditEvent,
     AuditHook,
+    FanoutHook,
     JsonlAuditHook,
     RefusedWriteError,
+    append_jsonl,
+    find_step,
+    load_json_records,
+    rel_path,
     require_new_file,
+    write_manifest,
 )
 from lib_safety.audit import utc_now
 
@@ -323,32 +329,9 @@ class ApplyResult:
     crops_log_path: Path
 
 
-class _FanoutHook:
-    """Record one event to every wrapped hook (audit JSONL + caller hook)."""
-
-    def __init__(self, *hooks: AuditHook) -> None:
-        self._hooks = hooks
-
-    def record(self, event: AuditEvent) -> None:
-        for hook in self._hooks:
-            hook.record(event)
-
-
-def _as_path(path: str | Path) -> Path:
-    return Path(path).expanduser()
-
-
-def _rel(root: Path, path: Path) -> str:
-    """Return *path* relative to *root* (POSIX style) when it is under it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
-
-
 def _resolve_source(root: Path, source: str | Path) -> Path:
     """Resolve a crop source under *root*, refusing paths outside it."""
-    candidate = _as_path(source)
+    candidate = Path(source).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.resolve()
@@ -368,30 +351,13 @@ def _resolve_destination(
     """
     if destination is None:
         return root / CROPPED_DIR_NAME / source.name
-    candidate = _as_path(destination)
+    candidate = Path(destination).expanduser()
     if not candidate.is_absolute():
         candidate = root / CROPPED_DIR_NAME / candidate
     resolved = candidate.resolve()
     if not resolved.is_relative_to(root):
         raise ValueError(f"crop destination is outside batch root: {destination}")
     return resolved
-
-
-def _find_multi_crop_step(
-    steps: list[object], manifest_path: Path
-) -> dict[str, object]:
-    for step in steps:
-        if isinstance(step, dict) and step.get("name") == MULTI_CROP_STEP_NAME:
-            return step
-    raise ValueError(
-        f"manifest has no '{MULTI_CROP_STEP_NAME}' step: {manifest_path}"
-    )
-
-
-def _append_jsonl(path: Path, record: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
 
 
 def apply_crop(
@@ -412,10 +378,10 @@ def apply_crop(
     ``multi_crop`` audit event is recorded on success (refusals are recorded
     by ``require_new_file``).
     """
-    source_path = _as_path(source)
+    source_path = Path(source).expanduser()
     if not source_path.is_file():
         raise FileNotFoundError(f"crop source not found: {source_path}")
-    dest_path = _as_path(destination)
+    dest_path = Path(destination).expanduser()
     hook = hook or NULL_HOOK
 
     if dest_path.resolve() == source_path.resolve():
@@ -518,7 +484,7 @@ def crop_batch(
     the batch root, a duplicate destination, or an existing destination
     aborts the whole call without creating crop files or log records.
     """
-    root = _as_path(batch_root)
+    root = Path(batch_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"batch root not found: {root}")
     if not root.is_dir():
@@ -534,16 +500,13 @@ def crop_batch(
         )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    steps = manifest.get("steps")
-    if not isinstance(steps, list):
-        raise ValueError(f"manifest has no 'steps' list: {manifest_path}")
-    step = _find_multi_crop_step(steps, manifest_path)
+    step = find_step(manifest, MULTI_CROP_STEP_NAME, manifest_path)
 
     specs = list(specs)
     hook = hook or NULL_HOOK
     audit_path = pickkit_dir / AUDIT_NAME
     crops_log_path = pickkit_dir / CROPS_LOG_NAME
-    fanout = _FanoutHook(JsonlAuditHook(audit_path), hook)
+    fanout = FanoutHook(JsonlAuditHook(audit_path), hook)
 
     # Pre-flight: validate everything before any file or directory changes.
     planned = _plan_crops(root, specs, hook=fanout)
@@ -556,19 +519,19 @@ def crop_batch(
 
         record: dict[str, object] = {
             "timestamp": spec.timestamp,
-            "source": _rel(root, source),
-            "destination": _rel(root, dest),
+            "source": rel_path(root, source),
+            "destination": rel_path(root, dest),
             "box": list(clamped),
         }
         if spec.note is not None:
             record["note"] = spec.note
-        _append_jsonl(crops_log_path, record)
+        append_jsonl(crops_log_path, record)
 
         if step.get("started_at") is None:
             step["started_at"] = utc_now()
         step["images_processed"] = int(step.get("images_processed") or 0) + 1
         applied += 1
-        destinations.append(_rel(root, dest))
+        destinations.append(rel_path(root, dest))
 
     finished = False
     if finish and applied:
@@ -576,9 +539,7 @@ def crop_batch(
         finished = True
 
     if applied:
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-        )
+        write_manifest(manifest_path, manifest)
 
     return ApplyResult(
         batch_root=root,
@@ -626,38 +587,7 @@ def load_crop_specs(path: str | Path) -> list[CropSpec]:
     ``{"source": ..., "box": [left, top, right, bottom], ...}`` objects.
     Blank JSONL lines are skipped. Extra keys are ignored.
     """
-    specs_file = _as_path(path)
-    if not specs_file.is_file():
-        raise FileNotFoundError(f"crop specs file not found: {specs_file}")
-
-    if specs_file.suffix.lower() == ".jsonl":
-        specs: list[CropSpec] = []
-        for line_no, raw in enumerate(
-            specs_file.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if not raw.strip():
-                continue
-            try:
-                record = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"invalid JSONL in {specs_file} at line {line_no}: {exc}"
-                ) from exc
-            specs.append(_record_to_crop_spec(record, specs_file, line_no))
-        return specs
-
-    try:
-        data = json.loads(specs_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid JSON in {specs_file}: {exc}") from exc
-    if not isinstance(data, list):
-        raise ValueError(
-            f"crop specs file must contain a JSON array: {specs_file}"
-        )
-    return [
-        _record_to_crop_spec(record, specs_file, index)
-        for index, record in enumerate(data, start=1)
-    ]
+    return load_json_records(path, "crop specs file", _record_to_crop_spec)
 
 
 def _parse_box(text: str) -> tuple[int, int, int, int]:

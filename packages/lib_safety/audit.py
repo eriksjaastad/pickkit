@@ -39,6 +39,11 @@ Public API
     Shared :class:`NullAuditHook` instance used by default everywhere.
 ``JsonlAuditHook``
     Append-only JSONL audit sink at a caller-supplied log path.
+``FanoutHook(*hooks)``
+    Audit hook that records each event on every wrapped hook, in order.
+``optional_jsonl_hook(path)``
+    Return ``JsonlAuditHook(path)``, or ``None`` when *path* is empty or
+    ``None`` (the CLIs' ``--audit PATH`` flag).
 
 Examples
 --------
@@ -126,3 +131,19 @@ class JsonlAuditHook:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event.as_dict(), sort_keys=True) + "\n")
+
+
+class FanoutHook:
+    """Record one event to every wrapped hook (e.g. audit JSONL + caller hook)."""
+
+    def __init__(self, *hooks: AuditHook) -> None:
+        self._hooks = hooks
+
+    def record(self, event: AuditEvent) -> None:
+        for hook in self._hooks:
+            hook.record(event)
+
+
+def optional_jsonl_hook(path: str | None) -> AuditHook | None:
+    """Return a :class:`JsonlAuditHook` on *path*, or ``None`` without a path."""
+    return JsonlAuditHook(path) if path else None
