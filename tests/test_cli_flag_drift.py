@@ -53,6 +53,10 @@ def test_cli_flags_match_module_docstrings() -> None:
         doc = module.__doc__ or ""
         parser = module.build_parser()
         real = _option_strings(parser)
+        assert real - {"-h", "--help"}, f"{parser.prog}: expected CLI options beyond --help"
+        assert _DOC_FLAG_RE.findall(doc), (
+            f"{parser.prog}: expected --flag tokens in the module docstring"
+        )
         missing = sorted(
             option
             for option in real

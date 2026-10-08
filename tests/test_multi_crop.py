@@ -32,8 +32,7 @@ from multi_crop import (
 )
 from review_select import CROP, Decision, apply_decisions
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import BATCH_A, jsonl_lines, read_json, snapshot, stage_batch_a
 
 
 class RecordingHook:
@@ -46,46 +45,16 @@ class RecordingHook:
         self.events.append(event)
 
 
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _jsonl_lines(path: Path) -> list[dict[str, object]]:
-    if not path.is_file():
-        return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-
-
 def _crop_lines(root: Path) -> list[dict[str, object]]:
-    return _jsonl_lines(root / ".pickkit" / CROPS_LOG_NAME)
+    return jsonl_lines(root / ".pickkit" / CROPS_LOG_NAME)
 
 
 def _multi_crop_step(root: Path) -> dict[str, object]:
-    manifest = _read_json(root / ".pickkit" / "project.json")
+    manifest = read_json(root / ".pickkit" / "project.json")
     for step in manifest["steps"]:
         if step["name"] == "multi_crop":
             return step
     raise AssertionError("multi_crop step missing")
-
-
-def _snapshot(directory: Path) -> dict[str, bytes]:
-    """Relative path -> bytes for every file under *directory*."""
-    return {
-        str(path.relative_to(directory)): path.read_bytes()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
 
 
 def _image_size(path: Path) -> tuple[int, int]:
@@ -292,7 +261,7 @@ def test_crop_batch_refuses_destination_collision_without_writing(
     assert step["started_at"] is None
     assert step["images_processed"] is None
     # The refusal is audited through the batch audit JSONL.
-    audit_ops = [e["operation"] for e in _jsonl_lines(root / ".pickkit" / "audit.jsonl")]
+    audit_ops = [e["operation"] for e in jsonl_lines(root / ".pickkit" / "audit.jsonl")]
     assert audit_ops == ["intake_init", "refuse_write"]
 
 
@@ -374,7 +343,7 @@ def test_crop_batch_audits_jsonl_and_caller_hook(tmp_path: Path) -> None:
 
     crop_batch(root, [CropSpec("img_004.png", (0, 0, 16, 16))], hook=hook)
 
-    audit_lines = _jsonl_lines(root / ".pickkit" / "audit.jsonl")
+    audit_lines = jsonl_lines(root / ".pickkit" / "audit.jsonl")
     assert [e["operation"] for e in audit_lines] == ["intake_init", "multi_crop"]
     assert all(e["ok"] for e in audit_lines[1:])
 
@@ -384,7 +353,7 @@ def test_crop_batch_audits_jsonl_and_caller_hook(tmp_path: Path) -> None:
 
 
 def test_never_mutates_committed_sandbox(tmp_path: Path) -> None:
-    before = _snapshot(BATCH_A)
+    before = snapshot(BATCH_A)
 
     root = stage_batch_a(tmp_path)
     intake_init(root)
@@ -395,7 +364,7 @@ def test_never_mutates_committed_sandbox(tmp_path: Path) -> None:
         root / CROPPED_DIR_NAME / "img_002_extra.png",
     )
 
-    assert _snapshot(BATCH_A) == before
+    assert snapshot(BATCH_A) == before
 
 
 # --- load_crop_specs --------------------------------------------------------

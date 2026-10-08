@@ -24,15 +24,7 @@ from finish_package import (
 from finish_package import ui
 from intake_init import intake_init
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
-
-
-def stage_batch_a(tmp_path: Path) -> Path:
-    """Copy sandbox/batch_a into tmp_path and return the staged root."""
-    root = tmp_path / "batch_a"
-    shutil.copytree(BATCH_A, root)
-    return root
+from conftest import BATCH_A, snapshot, stage_batch_a
 
 
 def stage_selected_batch(tmp_path: Path) -> Path:
@@ -45,15 +37,6 @@ def stage_selected_batch(tmp_path: Path) -> Path:
     shutil.copy(BATCH_A / "img_001.yaml", selected / "img_001.yaml")
     shutil.copy(BATCH_A / "img_002.png", selected / "img_002.png")
     return root
-
-
-def _snapshot(directory: Path) -> dict[str, bytes]:
-    """Relative path -> bytes for every file under *directory*."""
-    return {
-        str(path.relative_to(directory)): path.read_bytes()
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    }
 
 
 def _manifest(root: Path) -> dict[str, object]:
@@ -277,13 +260,13 @@ def test_flask_commit_refuses_bad_input_and_bad_overrides(tmp_path: Path) -> Non
 
 
 def test_ui_never_mutates_committed_sandbox(tmp_path: Path) -> None:
-    before = _snapshot(BATCH_A)
+    before = snapshot(BATCH_A)
 
     root = stage_selected_batch(tmp_path)
     client = ui.create_app(root).test_client()
     client.post("/api/commit", json={})
 
-    assert _snapshot(BATCH_A) == before
+    assert snapshot(BATCH_A) == before
 
 
 # --- CLI wiring --------------------------------------------------------------
@@ -326,13 +309,6 @@ def test_cli_refuses_host_port_without_ui(
 def _break_manifest(root: Path, kind: str) -> Path:
     """Damage ``.pickkit/project.json`` in one of the read-failure ways."""
     manifest = root / ".pickkit" / "project.json"
-    payloads = {
-        "non_object_list": "[]",
-        "non_object_number": "42",
-        "non_object_null": "null",
-        "non_object_string": '"nope"',
-        "non_object_bool": "true",
-    }
     if kind == "missing":
         manifest.unlink()  # governance: allow-delete DS001: pytest tmp_path copy of the intake manifest
     elif kind == "unreadable":
@@ -342,8 +318,8 @@ def _break_manifest(root: Path, kind: str) -> Path:
         manifest.mkdir()
     elif kind == "bad_json":
         manifest.write_text("{not json", encoding="utf-8")
-    elif kind in payloads:
-        manifest.write_text(payloads[kind], encoding="utf-8")
+    elif kind == "non_object":
+        manifest.write_text("[]", encoding="utf-8")
     elif kind == "bad_encoding":
         manifest.write_bytes(b"\xff\xfe{")
     else:
@@ -351,56 +327,93 @@ def _break_manifest(root: Path, kind: str) -> Path:
     return manifest
 
 
-@pytest.mark.parametrize("method,url", [
-    ("GET", "/"),
-    ("GET", "/api/status"),
-    ("POST", "/api/refresh"),
-    ("POST", "/api/commit"),
+def _assert_manifest_error_json(
+    response, manifest: Path, status: int, message: str
+) -> dict[str, object]:
+    """Assert a JSON (never HTML) error that names *manifest* and *message*."""
+    assert response.is_json, response.data[:200]
+    assert response.status_code == status
+    lowered = response.data.lower()
+    assert b"<html" not in lowered
+    assert b"<!doctype" not in lowered
+    body = response.get_json()
+    assert str(manifest) in body["error"]
+    assert message in body["error"]
+    return body
+
+
+# Manifest read failures take three paths through the app: ``/api/status``
+# and ``/api/refresh`` share ``dry_run_response``; ``GET /`` relies on the
+# app-level error handlers; ``POST /api/commit`` has its own except clauses.
+# Each distinct message is checked once on ``/api/status``; the other two
+# paths are checked once per status code they map.
+
+
+@pytest.mark.parametrize("kind,status,message", [
+    ("missing", 404, "missing manifest"),
+    ("directory", 400, "path is a directory"),
+    ("bad_json", 400, "not valid JSON"),
+    ("non_object", 400, "not a JSON object"),
+    ("bad_encoding", 400, "UTF-8"),
 ])
-@pytest.mark.parametrize("kind", [
-    "missing",
-    "unreadable",
-    "directory",
-    "bad_json",
-    "non_object_list",
-    "non_object_number",
-    "non_object_null",
-    "non_object_string",
-    "non_object_bool",
-    "bad_encoding",
-])
-def test_manifest_read_failures_return_json(
-    tmp_path: Path, method: str, url: str, kind: str
+def test_status_reports_a_manifest_read_failure_as_json(
+    tmp_path: Path, kind: str, status: int, message: str
 ) -> None:
-    if kind == "unreadable" and os.geteuid() == 0:
-        pytest.skip("root ignores file permissions")
     root = stage_selected_batch(tmp_path)
     client = ui.create_app(root).test_client()
     manifest = _break_manifest(root, kind)
+
+    response = client.get("/api/status")
+
+    _assert_manifest_error_json(response, manifest, status, message)
+
+
+def test_status_reports_an_unreadable_manifest_as_json(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root ignores file permissions")
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    manifest = _break_manifest(root, "unreadable")
     try:
-        kwargs = {"json": {}} if method == "POST" else {}
-        response = client.open(url, method=method, **kwargs)
-        assert response.is_json, response.data[:200]
-        assert response.status_code == (404 if kind == "missing" else 400)
-        body = response.get_json()
-        assert str(manifest) in body["error"]
-        lowered = response.data.lower()
-        assert b"<html" not in lowered
-        assert b"<!doctype" not in lowered
-        if kind == "bad_json":
-            assert "not valid JSON" in body["error"]
-        if kind.startswith("non_object"):
-            assert "not a JSON object" in body["error"]
-        if kind == "bad_encoding":
-            assert "UTF-8" in body["error"]
-        if kind == "directory":
-            assert "directory" in body["error"]
-        if url == "/api/commit":
-            assert body["committed"] is False
-            assert not (root / DEFAULT_ZIP_NAME).exists()
+        response = client.get("/api/status")
+
+        _assert_manifest_error_json(response, manifest, 400, "cannot read manifest")
     finally:
-        if kind == "unreadable" and manifest.is_file():
-            manifest.chmod(0o644)
+        manifest.chmod(0o644)
+
+
+@pytest.mark.parametrize("kind,status,message", [
+    ("missing", 404, "missing manifest"),  # the FileNotFoundError handler
+    ("bad_json", 400, "not valid JSON"),  # the ManifestError handler
+])
+def test_index_page_returns_json_not_html_for_a_bad_manifest(
+    tmp_path: Path, kind: str, status: int, message: str
+) -> None:
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    manifest = _break_manifest(root, kind)
+
+    page = client.get("/")
+
+    _assert_manifest_error_json(page, manifest, status, message)
+
+
+@pytest.mark.parametrize("kind,status,message", [
+    ("missing", 404, "missing manifest"),  # except FileNotFoundError
+    ("bad_json", 400, "not valid JSON"),  # except ValueError (ManifestError)
+])
+def test_commit_reports_a_bad_manifest_as_not_committed(
+    tmp_path: Path, kind: str, status: int, message: str
+) -> None:
+    root = stage_selected_batch(tmp_path)
+    client = ui.create_app(root).test_client()
+    manifest = _break_manifest(root, kind)
+
+    commit = client.post("/api/commit", json={})
+
+    body = _assert_manifest_error_json(commit, manifest, status, message)
+    assert body["committed"] is False
+    assert not (root / DEFAULT_ZIP_NAME).exists()
 
 
 def test_load_manifest_names_the_path_for_a_missing_file(tmp_path: Path) -> None:

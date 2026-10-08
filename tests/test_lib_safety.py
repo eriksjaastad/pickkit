@@ -23,8 +23,8 @@ from lib_safety import (
     trash,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BATCH_A = REPO_ROOT / "sandbox" / "batch_a"
+from conftest import BATCH_A
+
 
 # ``lib_safety.trash`` the attribute is the public function (re-exported in
 # __init__), so reach the submodule through importlib for monkeypatching.
