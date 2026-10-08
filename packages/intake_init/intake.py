@@ -1,125 +1,63 @@
 """Initialize a pickkit batch: manifest, extension inventory, audit baseline.
 
-This module is the single source of truth for intake behaviour: how a batch
-root is validated, which files count as images, what is written under
-``.pickkit/``, how re-intake is made safe, and how the audit baseline is
-started. The private precursor project-starter was a monolithic client script
-with client-specific IDs and pre-made stage paths; pickkit's intake is a
-small library that writes only its own JSON state under the batch root.
+``pickkit-intake <batch_root>`` snapshots a directory of images and writes
+pickkit's state for it. It creates only ``<batch_root>/.pickkit/``; it never
+moves or changes an image and never creates stage directories such as
+``__selected``. It prints a JSON summary of what it wrote.
 
-Principles
-----------
-Library first
-    :func:`intake_init` is the whole behaviour; the CLI in this module is a
-    thin wrapper around it.
-Point at a directory
-    The batch root must exist and be a directory. Anything else is refused
-    with :class:`FileNotFoundError` / :class:`NotADirectoryError` before any
-    file is written.
-Create ``.pickkit/`` only
-    Intake creates exactly one state directory, ``<batch_root>/.pickkit/``,
-    and three files inside it: ``project.json``, ``allowed_ext.json``, and
-    ``audit.jsonl``. On re-intake it may also create one backup directory,
-    ``<batch_root>/.pickkit.bak.<UTC>`` (see Backup-then-overwrite). Stage
-    directory names such as ``__selected`` and ``__crop`` are
-    pickkit-public conventions reserved for future review/crop plugins;
-    intake never creates them (or any character-group directories).
-JSON manifest
-    ``project.json`` records ``schema_version`` (currently 2), ``started_at``
-    (UTC with a ``Z`` suffix), ``finished_at`` (null at intake), ``root``
-    (resolved absolute string), ``image_count``, the public spine ``steps``,
-    and an empty ``metrics`` slot for later plugins.
-Image count
-    Raster images are matched case-insensitively by suffix against
-    :data:`DEFAULT_IMAGE_SUFFIXES` and counted recursively under the batch
-    root. The current default set is ``.png``, ``.jpg``, ``.jpeg``,
-    ``.webp``, ``.tif``, ``.tiff``, ``.bmp``, ``.gif``.
-Extension inventory
-    ``allowed_ext.json`` snapshots the files present at intake time (before
-    any ``.pickkit/`` artifacts exist): lowercase extensions without leading
-    dots, per-extension counts, a sorted ``allowedExtensions`` list for the
-    future finish-package allowlist, and a ``snapshot_at`` UTC timestamp.
-    Hidden files and directories (any path part starting with a dot,
-    including ``.pickkit`` itself) are skipped.
-Audit baseline
-    ``audit.jsonl`` is an append-only JSONL audit started via
-    ``lib_safety.JsonlAuditHook``; intake records one successful
-    ``intake_init`` event there. With a caller-supplied ``hook``, the same
-    events are also recorded to that hook.
-Backup-then-overwrite
-    If ``<batch_root>/.pickkit/`` already exists and ``force`` is false,
-    intake first moves the whole directory to a sibling timestamped backup
-    such as ``.pickkit.bak.20260926T192530Z`` (``Path.rename``), then writes
-    a fresh ``.pickkit/``. With ``force=True`` (CLI ``--force``) the backup
-    is skipped and ``.pickkit/`` is overwritten in place. The audit event
-    records the backup destination when one was made. The legacy
-    :class:`ManifestExistsError` is no longer raised.
+Usage::
 
-Public API
-----------
-``intake_init(batch_root, *, force=False, hook=None)``
-    Validate *batch_root*, then write the manifest, extension inventory, and
-    audit baseline under ``<batch_root>/.pickkit/``. On re-intake the
-    existing ``.pickkit/`` is backed up to ``.pickkit.bak.<UTC>`` before a
-    fresh one is written, unless ``force=True`` (or CLI ``--force``), which
-    skips the backup and overwrites in place. Returns an
-    :class:`IntakeResult`. With ``hook`` given, the same events are also
-    recorded there.
-``IntakeResult``
-    Frozen dataclass describing what intake wrote: ``batch_root``,
-    ``manifest_path``, ``inventory_path``, ``audit_path``, ``image_count``,
-    ``started_at``, ``extensions``, and ``backup_path`` (``Path | None``;
-    null/None when no backup was made).
-``ManifestExistsError``
-    Reserved/legacy exception (a :class:`FileExistsError`). Current
-    ``intake_init`` never raises it: re-intake backs up and overwrites by
-    default, and ``--force`` overwrites in place. Kept exported for API
-    stability.
-``DEFAULT_IMAGE_SUFFIXES``
-    Tuple of raster-image suffixes counted by intake (lowercase, with dots).
-``build_parser()``
-    Return the argparse parser for the ``pickkit-intake`` CLI. The parser
-    description is this module docstring; ``--force`` skips the backup and
-    wipes ``.pickkit/`` in place.
-``main(argv=None)``
-    CLI entry point; parses args and calls :func:`intake_init`.
+    pickkit-intake tmp/batch_a
+    pickkit-intake tmp/batch_a --force
 
-Examples
---------
-Initialize a staged sandbox batch from the library::
+Options
+-------
+``--force``
+    Overwrite an existing ``.pickkit/`` in place, without the backup below.
 
-    from intake_init import intake_init
+Files
+-----
+``.pickkit/project.json``
+    The manifest: ``schema_version`` (2), ``started_at`` (UTC ``Z``),
+    ``finished_at`` (null), ``root``, ``image_count``, the spine ``steps``
+    and an empty ``metrics`` slot for the later tools.
+``.pickkit/allowed_ext.json``
+    Extension snapshot: per-extension counts and a sorted
+    ``allowedExtensions`` list (lowercase, no dots), which finish-package
+    uses as its allowlist.
+``.pickkit/audit.jsonl``
+    Append-only audit log, started with one ``intake_init`` event.
 
-    result = intake_init("tmp/batch_a")
-    result.manifest_path   # tmp/batch_a/.pickkit/project.json
-    result.backup_path     # None (no existing .pickkit to back up)
-    result.image_count     # 4
+Images are files whose suffix is in :data:`DEFAULT_IMAGE_SUFFIXES`
+(case-insensitive), counted recursively. Hidden files and directories are
+skipped.
 
-Re-initialize a batch from the CLI (backs up first; ``--force`` wipes in place)::
-
-    python -m intake_init sandbox/batch_a --force
+Re-intake is safe by default: an existing ``.pickkit/`` is first renamed to
+a sibling ``.pickkit.bak.<UTC>`` (for example
+``.pickkit.bak.20260926T192530Z``) and a fresh one is written.
 
 Before intake
 -------------
 Quote a batch root that contains spaces. Keep each image in the same
-directory as its same-stem sidecars before you run intake. Companions are
-paired by filename stem, not by mtime, so ``foo_stage1.png`` and
-``foo_stage1.5.png`` are different stems (see ``lib_safety.companions``).
-
-To intake only one stem family from a large ZIP, extract the matching names
-into one directory first (image and sidecars side by side), then point
-intake at that directory::
+directory as its same-stem sidecars: companions are paired by filename stem,
+so ``foo_stage1.png`` and ``foo_stage1.5.png`` are different stems. To intake
+one stem family from a large ZIP, extract the matching names into one
+directory first::
 
     mkdir -p ".scratch/subset batch"
     unzip "/path/to/delivery.zip" "path/inside/zip/*stage1*" -d ".scratch/subset batch"
     pickkit-intake ".scratch/subset batch"
 
-Out of scope
-------------
-Stage directories (``__selected``, ``__crop``, character groups), pixel
-writes, review/crop/finish steps, and client-specific manifests are **not**
-this module's job. Those belong to future plugins; intake only records the
-initial snapshot and reserves public spine step/metrics slots.
+Public API
+----------
+``intake_init(batch_root, *, force=False, hook=None)``
+    Write the three files above; returns an :class:`IntakeResult`.
+``IntakeResult``
+``ManifestExistsError``
+    Legacy; no longer raised.
+``DEFAULT_IMAGE_SUFFIXES``
+``build_parser()``
+``main(argv=None)``
 """
 
 from __future__ import annotations
@@ -134,6 +72,16 @@ from pathlib import Path
 from lib_safety import NULL_HOOK, AuditEvent, AuditHook, JsonlAuditHook
 from lib_safety.audit import utc_now
 
+#: Names the ``intake_init`` package re-exports.
+__all__ = [
+    "DEFAULT_IMAGE_SUFFIXES",
+    "IntakeResult",
+    "ManifestExistsError",
+    "build_parser",
+    "intake_init",
+    "main",
+]
+
 #: Directory intake writes under the batch root (and nowhere else).
 PICKKIT_DIR_NAME = ".pickkit"
 
@@ -145,9 +93,8 @@ AUDIT_NAME = "audit.jsonl"
 #: Version of the ``project.json`` schema; later plugins bump this to evolve.
 SCHEMA_VERSION = 2
 
-#: Public spine step names recorded in ``project.json`` ``steps`` (snake_case,
-#: matching the PLAN spine: intake-init, review-select, multi-crop,
-#: finish-package). Plugins own their own step/metrics slots.
+#: Public spine step names recorded in ``project.json`` ``steps``, in order.
+#: Each later tool owns its own step and metrics slot.
 PUBLIC_SPINE_STEPS: tuple[str, ...] = (
     "intake",
     "review_select",
@@ -172,12 +119,7 @@ DEFAULT_IMAGE_SUFFIXES: tuple[str, ...] = (
 
 
 class ManifestExistsError(FileExistsError):
-    """Reserved/legacy exception; not raised by current :func:`intake_init`.
-
-    Kept exported for API stability. Earlier intake releases raised this when
-    ``project.json`` already existed and ``force`` was false; current intake
-    backs up ``.pickkit/`` and overwrites by default instead.
-    """
+    """Legacy exception, kept exported; :func:`intake_init` no longer raises it."""
 
 
 @dataclass(frozen=True)
@@ -229,11 +171,7 @@ def _scan_extensions(root: Path) -> dict[str, int]:
 
 
 def _backup_stamp() -> str:
-    """Return a compact UTC stamp (``YYYYMMDDTHHMMSSZ``) for backup names.
-
-    Same clock style as :func:`lib_safety.audit.utc_now`, formatted compactly
-    for a filesystem-friendly directory name.
-    """
+    """Return a compact UTC stamp (``YYYYMMDDTHHMMSSZ``) for backup names."""
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
@@ -302,28 +240,12 @@ def intake_init(
 ) -> IntakeResult:
     """Initialize *batch_root*: manifest, extension inventory, audit baseline.
 
-    Writes, under ``<batch_root>/.pickkit/``:
-
-    * ``project.json`` — schema version 2, UTC-Z ``started_at``,
-      ``finished_at`` null, resolved root path, image count, public spine
-      ``steps``, and ``metrics``;
-    * ``allowed_ext.json`` — extension snapshot for a later finish-package
-      allowlist;
-    * ``audit.jsonl`` — append-only JSONL baseline with one successful
-      ``intake_init`` event.
-
-    If ``<batch_root>/.pickkit/`` already exists:
-
-    * with ``force`` false (default), the directory is moved to a sibling
-      timestamped backup ``<batch_root>/.pickkit.bak.<UTC>`` before a fresh
-      ``.pickkit/`` is written;
-    * with ``force=True``, the backup is skipped and ``.pickkit/`` is
-      overwritten in place.
-
-    Refuses with :class:`FileNotFoundError` / :class:`NotADirectoryError` if
-    *batch_root* is missing or not a directory. No stage directories
-    (``__selected`` / ``__crop``) are created. With ``hook`` given, events
-    are also recorded there.
+    Writes ``project.json``, ``allowed_ext.json`` and ``audit.jsonl`` under
+    ``<batch_root>/.pickkit/`` (see the module docstring). An existing
+    ``.pickkit/`` is renamed to ``.pickkit.bak.<UTC>`` first, unless
+    ``force=True`` overwrites it in place. Raises :class:`FileNotFoundError` /
+    :class:`NotADirectoryError` if *batch_root* is missing or not a directory.
+    The audit event also goes to *hook* when given.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():

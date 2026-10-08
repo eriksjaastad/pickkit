@@ -1,115 +1,56 @@
 """Local Flask review UI for pickkit review-select triage.
 
-This module is the single source of truth for the interactive review UI: how
-the pending image queue is listed from an already intake'd batch, how
-keyboard/button actions map onto ``review_select`` decisions, how image bytes
-are served safely under the batch root, and how the small Flask app is
-assembled and run. The batch engine itself (moving files, companions, the
-decision log, manifest updates, audit) is
-``review_select.review.apply_decisions``; the UI never reimplements file
-moves.
+Started by ``pickkit-review <batch_root> --ui``. The batch must be intake'd.
+The page shows one pending image at a time; every Keep / Crop / Reject calls
+``review_select.review.apply_decisions`` for that one image, so the UI never
+moves files or writes logs itself, and it never recommends anything.
 
-Principles
-----------
-Engine only
-    Every Keep / Crop / Reject action calls
-    ``apply_decisions(batch_root, [Decision(source, action)])`` immediately;
-    the UI never moves files, writes logs, or updates the manifest itself.
-Batch must be intake'd
-    ``<batch_root>/.pickkit/project.json`` must already exist (created by
-    intake-init). :func:`list_pending_images` and :func:`create_app` refuse
-    anything else with :class:`FileNotFoundError` before a server starts or a
-    queue is returned.
-Pending queue from disk
-    The queue is re-listed from disk on every request; the UI never trusts a
-    stale in-memory queue. Visible files matching
-    :data:`intake_init.intake.DEFAULT_IMAGE_SUFFIXES` under the batch root are
-    pending. Anything with a hidden path part (``.pickkit`` included) or a
-    known stage directory part (:data:`STAGE_DIR_NAMES`) is skipped.
-Flat batches first
-    Per-image triage is the v1 UX: the pending head is one image. Same-stem
-    image groups are deferred.
-Safe bytes
-    Image bytes are served with Flask ``send_file`` from paths resolved under
-    the batch root only; ``..`` and absolute escapes are refused.
-Session counter
-    ``decided_this_session`` is an in-memory Flask app config value, reset on
-    each server start.
-No AI
-    The UI never recommends, ranks, crops, or writes pixels; it only shows
-    originals and applies the three public decisions.
-
-Public API
-----------
-``DEFAULT_HOST``
-    Default bind host for :func:`run_ui`: ``127.0.0.1`` (local only).
-``DEFAULT_PORT``
-    Default bind port for :func:`run_ui`: ``8765``.
-``STAGE_DIR_NAMES``
-    Frozenset of known stage directory names skipped when they appear as a
-    path part while listing pending images: ``__selected``, ``__crop``,
-    ``__reject``, and ``__cropped``.
-``list_pending_images(batch_root)``
-    Return the pending image queue as a sorted list of absolute
-    :class:`pathlib.Path` objects under *batch_root* (sorted by relative
-    POSIX path, stable).
-``map_ui_action(token)``
-    Map a UI action token to one of ``review_select.review.ACTIONS``.
-    Accepts ``K``/``C``/``R``, ``1``/``2``/``3``, and the snake_case
-    synonyms ``keep``/``crop``/``reject``. Unknown tokens are refused with
-    :class:`ValueError`.
-``safe_image_path(batch_root, rel_or_name)``
-    Re-exported from :mod:`lib_safety.webui`, which documents it.
-``create_app(batch_root, *, session_decided=None)``
-    Build the Flask app for *batch_root*. ``session_decided`` seeds the
-    in-memory decided counter (default ``0``).
-``run_ui(batch_root, *, host=DEFAULT_HOST, port=DEFAULT_PORT)``
-    Validate *batch_root* and start the Flask server on ``host:port``.
+The pending queue is re-read from disk on every request: every image under the
+batch root (suffix in ``intake_init.DEFAULT_IMAGE_SUFFIXES``) except hidden
+paths and anything inside a stage directory (:data:`STAGE_DIR_NAMES`:
+``__selected``, ``__crop``, ``__reject``, ``__cropped``). The
+decided-this-session count resets when the server restarts. Finish is
+CLI-only, and ``--finish`` sets ``finished_at`` only when the same call
+applies at least one decision (e.g. pass it with the last image's decision);
+a bare ``pickkit-review <batch_root> --finish`` leaves the step unfinished.
 
 Keyboard shortcuts
 ------------------
-``K`` / ``1`` — keep   (moves to ``__selected``)
-``C`` / ``2`` — crop   (queues to ``__crop``)
-``R`` / ``3`` — reject (moves to ``__reject``)
-
-The full-word tokens ``keep`` / ``crop`` / ``reject`` are accepted by
-:func:`map_ui_action` as synonyms; the page buttons post those words.
+``K`` / ``1`` keep (moves to ``__selected``)
+``C`` / ``2`` crop (queues to ``__crop``)
+``R`` / ``3`` reject (moves to ``__reject``)
 
 Host / port
 -----------
-The UI binds ``127.0.0.1:8765`` by default (see ``DEFAULT_HOST`` /
-``DEFAULT_PORT``). The ``pickkit-review`` CLI overrides these with ``--host``
-and ``--port``. The server is local-only by default; binding a non-loopback
-interface is an explicit operator choice.
+Binds ``127.0.0.1:8765`` by default, local only (``DEFAULT_HOST`` /
+``DEFAULT_PORT``); ``pickkit-review --host`` / ``--port`` override it.
 
 Routes
 ------
 ``GET /``
-    Review page: current pending head or a "queue empty" state, with the
-    remaining and decided-this-session counts.
+    The review page.
 ``GET /api/status``
-    JSON: ``remaining`` (int), ``decided_this_session`` (int), and
-    ``current`` (relative POSIX path of the pending head, or null).
+    JSON ``remaining``, ``decided_this_session`` and ``current`` (the pending
+    head's relative path, or null).
 ``POST /api/decide``
-    JSON body ``{"source": "<relative path>", "action": "<token>"}``. Maps
-    the action, resolves the source safely, applies one ``Decision`` via
-    :func:`review_select.review.apply_decisions` immediately, and returns the
-    next status JSON in the same shape as ``GET /api/status``.
+    Body ``{"source": "<relative path>", "action": "<token>"}``; applies one
+    decision and returns the next status. 400 for a bad body, token or path,
+    404 for a missing source, 409 when the destination exists.
 ``GET /image/<path:rel>``
-    Serve the original image bytes for a file under the batch root; escape
-    attempts and missing files return 404.
+    The image bytes; 404 for paths outside the batch root or missing files.
 
-Out of scope / Notes
---------------------
-- Finish: ``--finish`` stays CLI-only for now. An empty-queue finish call
-  would be a no-op under ``apply_decisions`` finish semantics
-  (``finished_at`` is only set when at least one decision is applied in the
-  same call), so the UI shows ``pickkit-review <batch_root> --finish`` in the
-  queue-empty state instead of shipping a misleading finish button.
-- Same-stem image grouping, AI recommendations, pixel crops, and the
-  multi-crop UI are out of scope.
-- Template: ``templates/review.html`` is shipped as package data (see
-  ``pyproject.toml`` ``[tool.setuptools.package-data]``).
+Public API
+----------
+``DEFAULT_HOST``
+``DEFAULT_PORT``
+``STAGE_DIR_NAMES``
+``list_pending_images(batch_root)``
+``map_ui_action(token)``
+    K/C/R, 1/2/3 or keep/crop/reject (any case) -> a review action.
+``safe_image_path(batch_root, rel_or_name)``
+    Re-exported from :mod:`lib_safety.webui`.
+``create_app(batch_root, *, session_decided=None)``
+``run_ui(batch_root, *, host=DEFAULT_HOST, port=DEFAULT_PORT)``
 """
 
 from __future__ import annotations
@@ -168,11 +109,8 @@ _UI_ACTION_TOKENS: dict[str, str] = {
 def list_pending_images(batch_root: str | Path) -> list[Path]:
     """Return the pending image queue for an intake'd *batch_root*.
 
-    The queue is every visible file under the batch root whose lowercase
-    suffix is in :data:`intake_init.intake.DEFAULT_IMAGE_SUFFIXES`, skipping
-    hidden path parts (including ``.pickkit``) and known stage directories
-    (:data:`STAGE_DIR_NAMES`). Returns absolute :class:`pathlib.Path` objects
-    sorted by relative POSIX path (stable).
+    Absolute paths of every image outside hidden paths and
+    :data:`STAGE_DIR_NAMES`, sorted by relative POSIX path.
     """
     root = require_intaked_root(batch_root)
     pending: list[Path] = []
@@ -191,11 +129,9 @@ def list_pending_images(batch_root: str | Path) -> list[Path]:
 
 
 def map_ui_action(token: str) -> str:
-    """Map a UI action token to one of ``review_select.review.ACTIONS``.
+    """Map K/C/R, 1/2/3 or keep/crop/reject (any case) to a review action.
 
-    Accepts ``K`` / ``C`` / ``R``, ``1`` / ``2`` / ``3``, and the synonyms
-    ``keep`` / ``crop`` / ``reject`` (case-insensitive). Unknown tokens are
-    refused with :class:`ValueError`.
+    Unknown tokens raise :class:`ValueError`.
     """
     if not isinstance(token, str):
         raise ValueError(
@@ -217,9 +153,7 @@ def create_app(
 ) -> Flask:
     """Build the Flask review app for an intake'd *batch_root*.
 
-    The pending queue is re-listed from disk on every request, and
-    ``decided_this_session`` is kept in-memory on the app config (seeded by
-    *session_decided*, default ``0``).
+    *session_decided* seeds the in-memory decided counter (default ``0``).
     """
     root = require_intaked_root(batch_root)
     app = Flask(__name__)

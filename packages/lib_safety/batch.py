@@ -1,30 +1,19 @@
 """Small helpers shared by the pickkit batch engines.
 
-The review, crop, finish, character and duplicate engines each used to carry
-their own copy of these; this module is the one copy they import. Every error
-message is part of the engines' contracts and must stay byte-identical.
+Their error messages are part of the engines' output and must stay
+byte-identical.
 
 Public API
 ----------
 ``rel_path(root, path)``
-    Return *path* relative to *root* in POSIX form, or ``str(path)`` when
-    it is not under *root*.
+    POSIX path relative to *root*, or ``str(path)`` when outside it.
 ``append_jsonl(path, record)``
-    Append *record* as one JSON line (keys unsorted), creating parent
-    directories first.
 ``find_step(manifest, name, manifest_path)``
-    Return the ``steps`` entry called *name* from a loaded ``project.json``.
-    Raises :class:`ValueError` naming *manifest_path* when ``steps`` is not a
-    list or has no such entry.
+    Raises :class:`ValueError` naming *manifest_path* when there is no such step.
 ``write_manifest(manifest_path, manifest)``
-    Write *manifest* as two-space-indented JSON with a trailing newline.
 ``load_json_records(path, label, convert)``
-    Read a JSON array file, or a ``.jsonl`` file with one object per line
-    (blank lines skipped), and return ``convert(record, path, index)`` for
-    each record. Errors name *label*, e.g. ``"decisions file not found: ..."``.
+    Errors name *label*, e.g. ``"decisions file not found: ..."``.
 ``normalise_suffix_set(suffixes, default)``
-    Return *suffixes* (or *default* when ``None``) as a set of lowercase,
-    dot-prefixed suffixes; a bare string counts as one suffix.
 """
 
 from __future__ import annotations

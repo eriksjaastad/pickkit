@@ -1,184 +1,13 @@
 """Find exact and near-duplicate images and thin the extras into the OS trash.
 
-This module is the single source of truth for duplicate-finder behaviour: how
-images are listed (non-recursive by default), how exact duplicates are hashed
-(sha256 over the full file bytes), how near duplicates are hashed (Pillow
-average hash / aHash), how near-duplicate clusters are built (deterministic
-greedy seed-neighbour clustering), how one keeper is chosen per group, and
-how the thin CLI wraps the library. The private precursor was a visual
-two-directory Flask UI with no perceptual-hash engine; pickkit's
-duplicate-finder is a **library + thin CLI** that only reports groups and
-trashes drop candidates through ``lib_safety``.
+``pickkit-dupes`` reports groups of duplicate images and can thin each group
+down to one keeper. Finding never changes anything. Thinning is a dry-run
+unless ``--commit`` is given; it then sends each extra to the OS trash with
+its same-stem companions (``lib_safety.trash(..., companions=True)``), so
+every drop is recoverable and the keeper is never touched. The batch need
+not be intake'd. Output is JSON.
 
-Principles
-----------
-Library first
-    :func:`find_exact_duplicates` / :func:`find_near_duplicates` /
-    :func:`thin_groups` are the whole behaviour; the CLI in this module is a
-    thin wrapper around them.
-Report, then thin
-    Finding duplicates never mutates anything. Thinning is dry-run by
-    default (``commit=False``) and only ``--commit`` / ``commit=True``
-    trashes drop candidates.
-Recoverable deletes only
-    Thinning trashes each drop through ``lib_safety.trash(...,
-    companions=True)`` so the image and its same-stem sidecars go to the OS
-    trash together. The keeper is never trashed and nothing is overwritten.
-Audit
-    One :class:`~lib_safety.AuditEvent` with operation :data:`OPERATION`
-    (``duplicate_finder``) is recorded per thin decision and per committed
-    trash; ``reason`` distinguishes ``find_exact`` / ``find_near`` /
-    ``thin; dry_run`` / ``thin; committed=True``. Library default
-    ``hook=None`` means :data:`lib_safety.NULL_HOOK` (no audit file); the
-    CLI creates an audit file only when ``--audit PATH`` is given, via
-    ``lib_safety.JsonlAuditHook``.
-Optional middle tool, not a spine step
-    :data:`intake_init.PUBLIC_SPINE_STEPS` stays ``intake`` /
-    ``review_select`` / ``multi_crop`` / ``finish_package``.
-    duplicate-finder never adds a step, never requires an intake'd batch,
-    and never touches ``.pickkit/project.json`` (``finished_at``, ``steps``,
-    or ``metrics``).
-
-Scope and defaults
-------------------
-Scan one or more directories (or individual image files) for duplicates. The
-default listing is **non-recursive**: each given root lists the images
-directly inside it, hidden names skipped, sorted by name — the same spirit as
-``character_tools.list_images``. ``--recursive`` / ``recursive=True`` walks
-subdirectories with ``Path.rglob`` and skips hidden path parts (any path part
-starting with ``.``). Image suffixes come from
-:data:`DEFAULT_IMAGE_SUFFIXES` (the same set as intake_init /
-character_tools). duplicate_finder mirrors the small listing helper locally
-so it has no cross-plugin hard dependency.
-
-Exact duplicates
-----------------
-Content hash is **SHA-256** of the full file bytes, read in 1 MiB chunks via
-:func:`hashlib.sha256`. Files that share the same digest form a group when
-the group has at least two members. :func:`content_hash` returns the
-lowercase hex digest string.
-
-Near duplicates
----------------
-Near mode uses a lightweight perceptual hash via **Pillow only** (already a
-dependency): the **average hash (aHash)**. :func:`average_hash` opens the
-image, converts it to greyscale, resizes it to ``hash_size x hash_size``
-(default :data:`HASH_SIZE` = 8, so a 64-bit hash), compares each pixel to the
-mean, and packs the comparison bits into an :class:`int` (1 when the pixel is
-above the mean, else 0). :func:`hamming_distance` returns the number of
-differing bits between two hashes. The default threshold is
-:data:`DEFAULT_NEAR_THRESHOLD` = 5 Hamming bits for a 64-bit hash; it is
-tunable via ``threshold=`` / ``--threshold N``.
-
-Clustering
-----------
-:func:`find_near_duplicates` locks this simple deterministic approach:
-
-1. Compute aHash for every image.
-2. Greedy seed-neighbour clustering: sort paths by name (ties by resolved
-   path string); for each unassigned image, start a cluster and pull in every
-   other unassigned image whose Hamming distance to the **seed** is ≤
-   ``threshold`` (not transitive full closure — documented as
-   seed-neighbour clustering).
-3. Only report clusters with at least two members.
-
-Exact-dup groups that are also near-dups may appear in both modes; that is
-fine. Modes are selected by the caller, never mixed in one call — prefer the
-separate :func:`find_exact_duplicates` and :func:`find_near_duplicates`
-functions.
-
-Keep policy for thinning
-------------------------
-When a group is thinned, **one file is kept and the rest are trashed** (with
-companions). Policies live in :data:`KEEP_POLICIES`:
-
-``keep_first``
-    Keep the lexicographically first path by resolved absolute path string
-    (deterministic; the default :data:`DEFAULT_KEEP_POLICY`).
-``keep_largest``
-    Keep the largest file size in bytes; tie-break by path name.
-``keep_oldest``
-    Keep the oldest ``st_mtime``; tie-break by path name.
-
-The keeper is never trashed; nothing is ever overwritten.
-
-Thinning
---------
-:func:`thin_groups(groups, *, commit=False, keep_policy=..., hook=None)` plans
-a keep/drop decision for every group via :func:`plan_thin`. Dry-run (default)
-computes and validates every plan and writes nothing. With ``commit=True``
-each drop is trashed via ``lib_safety.trash(path, companions=True,
-hook=hook)``. All plans are validated before the first trash; on the first
-trash failure the function stops and raises (earlier drops stay trashed). A
-quarantine folder is out of scope — trash is the locked thinning action
-(recoverable).
-
-Scanning
---------
-``list_images(source, *, recursive=False, suffixes=None)``
-    Local mirror of the character_tools listing helper. A file that looks
-    like an image returns ``[source]`` (a non-image file returns ``[]``); a
-    directory returns the non-recursive image list by default (hidden names
-    skipped, sorted by name). With ``recursive=True`` the directory is
-    walked with ``Path.rglob``, hidden path parts are skipped, and results
-    are sorted by path string. ``suffixes=None`` uses
-    :data:`DEFAULT_IMAGE_SUFFIXES`.
-
-Public API
-----------
-``DEFAULT_IMAGE_SUFFIXES``
-    Tuple of raster-image suffixes used by list/scan (lowercase, with dots);
-    the same set as intake_init / character_tools.
-``HASH_SIZE``
-    Default aHash side length (8 → a 64-bit hash).
-``DEFAULT_NEAR_THRESHOLD``
-    Default Hamming-distance threshold for near-duplicate clustering (5).
-``KEEP_POLICIES``
-    Tuple of supported keep policies: ``keep_first``, ``keep_largest``,
-    ``keep_oldest``.
-``DEFAULT_KEEP_POLICY``
-    Default keep policy: ``keep_first``.
-``OPERATION``
-    Audit operation recorded for every thin action: ``duplicate_finder``
-    (``reason`` distinguishes ``find_exact`` / ``find_near`` /
-    ``thin; dry_run`` / ``thin; committed=True``).
-``content_hash(path) -> str``
-    Return the lowercase sha256 hex digest of the full file bytes.
-``average_hash(path, *, hash_size=HASH_SIZE) -> int``
-    Return the Pillow average hash (aHash) of an image as an int.
-``hamming_distance(a, b) -> int``
-    Return the number of differing bits between two non-negative ints.
-``list_images(source, *, recursive=False, suffixes=None) -> list[Path]``
-    List image files from a source file or directory (see Scanning).
-``find_exact_duplicates(sources, *, recursive=False, suffixes=None) -> list[DuplicateGroup]``
-    Group images with identical sha256 digests into groups of size ≥ 2.
-    *sources* may be a single path or a sequence of directories/files.
-``find_near_duplicates(sources, *, recursive=False, threshold=DEFAULT_NEAR_THRESHOLD, hash_size=HASH_SIZE, suffixes=None) -> list[DuplicateGroup]``
-    Cluster images by aHash seed-neighbour greedy clustering (groups of
-    size ≥ 2).
-``plan_thin(group, *, keep_policy=DEFAULT_KEEP_POLICY) -> ThinPlan``
-    Choose the keeper and drop paths for one DuplicateGroup.
-``thin_groups(groups, *, commit=False, keep_policy=DEFAULT_KEEP_POLICY, hook=None) -> ThinResult``
-    Plan (dry-run) or perform (commit) thinning for many groups.
-``DuplicateGroup``
-    Frozen dataclass: ``kind`` (``"exact"`` | ``"near"``), ``key`` (hex
-    digest or seed hash hex string), ``paths`` (member image paths), and
-    optional ``threshold`` for near groups.
-``ThinPlan``
-    Frozen dataclass: ``keep`` (keeper path) and ``drop`` (paths to trash).
-``ThinResult``
-    Frozen dataclass: ``committed``, ``groups_planned``, ``kept``,
-    ``dropped``, and ``plans`` (the per-group ThinPlans).
-``build_parser()``
-    Return the argparse parser for the ``pickkit-dupes`` CLI. The parser
-    description is this module docstring; subcommands are ``exact``,
-    ``near``, and ``thin``.
-``main(argv=None)``
-    CLI entry point; parses args, dispatches, and prints JSON to stdout.
-
-CLI
----
-The ``pickkit-dupes`` CLI uses subcommands and prints JSON to stdout:
+Usage::
 
     pickkit-dupes exact DIR [DIR ...] [--recursive] [--json]
     pickkit-dupes near DIR [DIR ...] [--recursive] [--threshold N] [--json]
@@ -186,37 +15,67 @@ The ``pickkit-dupes`` CLI uses subcommands and prints JSON to stdout:
                  [--threshold N] [--keep keep_first|keep_largest|keep_oldest]
                  [--commit] [--audit PATH]
 
-``exact`` / ``near`` print a JSON report of duplicate groups (paths + key)
-and exit 0 even when no duplicates are found (an empty ``groups`` list).
-``thin`` finds groups with the chosen ``--mode`` and then thins them; dry-run
-is the default and prints the keep/drop plan JSON. ``--commit`` trashes the
-drops (with companions) via ``lib_safety``. ``--recursive`` walks
-directories instead of the default non-recursive listing. ``--threshold N``
-sets the near-mode Hamming threshold. ``--keep`` selects the keep policy.
-``--audit PATH`` appends audit events via ``lib_safety.JsonlAuditHook``.
-``--json`` is accepted on ``exact`` / ``near`` for script symmetry (JSON is
-already the default output format). ``python -m duplicate_finder`` runs the
-same CLI.
+``exact`` and ``near`` exit 0 with an empty ``groups`` list when nothing is
+found. ``thin`` finds groups with ``--mode`` and prints the keep/drop plan.
 
-Examples
+Options
+-------
+``--recursive``
+    Walk subdirectories, skipping hidden paths. The default is non-recursive:
+    the images directly inside each DIR, sorted by name.
+``--threshold N``
+    Near mode: the largest Hamming distance that still counts as a match
+    (default :data:`DEFAULT_NEAR_THRESHOLD`, 5).
+``--keep``
+    The keeper in each group: ``keep_first`` (first by full path; the
+    default :data:`DEFAULT_KEEP_POLICY`), ``keep_largest`` (biggest file) or
+    ``keep_oldest`` (oldest mtime); ties go to the path name. See
+    :data:`KEEP_POLICIES`.
+``--commit``
+    Trash the drops. All plans are checked first; the first failed trash
+    stops the run, and earlier drops stay trashed.
+``--audit PATH``
+    Append audit events to PATH: :data:`OPERATION` events for the find and
+    each drop, plus lib_safety's ``trash`` event per committed drop. Without
+    it no audit file is written.
+``--json``
+    Accepted for symmetry; JSON is already the output.
+
+Matching
 --------
-    from duplicate_finder import find_exact_duplicates, thin_groups
+Exact
+    Same sha256 of the full file bytes.
+Near
+    Pillow average hash (aHash): greyscale, resize to :data:`HASH_SIZE` x
+    :data:`HASH_SIZE` (64 bits), one bit per pixel above the mean. Groups are
+    built by greedy seed-neighbour clustering: images sorted by name, each
+    unassigned image seeds a group and takes every unassigned image within
+    the threshold of the seed (not transitively).
 
-    groups = find_exact_duplicates("sandbox/batch_a")
-    groups[0].kind                                     # "exact"
-    result = thin_groups(groups)
-    result.committed                                   # False
-    done = thin_groups(groups, commit=True)
-    done.committed                                     # True
+Only groups of two or more are reported. Image suffixes are
+:data:`DEFAULT_IMAGE_SUFFIXES`.
 
-Out of scope
-------------
-The interactive two-directory visual UI (Flask/Tk) is **out of scope** — no
-web server, templates, or browser UI. Client ``duplicate_group_*`` delivery
-layouts, training CSV hooks, and silent permanent deletes are **not** this
-module's job. duplicate-finder never extends ``PUBLIC_SPINE_STEPS``, never
-requires intake, and never mutates the spine manifest. A quarantine folder is
-future work; trash is the locked thinning action.
+Public API
+----------
+``DEFAULT_IMAGE_SUFFIXES``
+``HASH_SIZE = 8``
+``DEFAULT_NEAR_THRESHOLD = 5``
+``KEEP_POLICIES``
+``DEFAULT_KEEP_POLICY = "keep_first"``
+``OPERATION = "duplicate_finder"``
+``content_hash(path) -> str``
+``average_hash(path, *, hash_size=HASH_SIZE) -> int``
+``hamming_distance(a, b) -> int``
+``list_images(source, *, recursive=False, suffixes=None) -> list[Path]``
+``find_exact_duplicates(sources, *, recursive=False, suffixes=None) -> list[DuplicateGroup]``
+``find_near_duplicates(sources, *, recursive=False, threshold=DEFAULT_NEAR_THRESHOLD, hash_size=HASH_SIZE, suffixes=None) -> list[DuplicateGroup]``
+``plan_thin(group, *, keep_policy=DEFAULT_KEEP_POLICY) -> ThinPlan``
+``thin_groups(groups, *, commit=False, keep_policy=DEFAULT_KEEP_POLICY, hook=None) -> ThinResult``
+``DuplicateGroup``
+``ThinPlan``
+``ThinResult``
+``build_parser()``
+``main(argv=None)``
 """
 
 from __future__ import annotations
@@ -238,6 +97,29 @@ from lib_safety import (
     optional_jsonl_hook,
     trash,
 )
+
+#: Names the ``duplicate_finder`` package re-exports.
+__all__ = [
+    "DEFAULT_IMAGE_SUFFIXES",
+    "DEFAULT_KEEP_POLICY",
+    "DEFAULT_NEAR_THRESHOLD",
+    "HASH_SIZE",
+    "KEEP_POLICIES",
+    "OPERATION",
+    "DuplicateGroup",
+    "ThinPlan",
+    "ThinResult",
+    "average_hash",
+    "build_parser",
+    "content_hash",
+    "find_exact_duplicates",
+    "find_near_duplicates",
+    "hamming_distance",
+    "list_images",
+    "main",
+    "plan_thin",
+    "thin_groups",
+]
 
 #: Raster-image suffixes used by list/scan (lowercase, with dots); same set as
 #: ``intake_init.DEFAULT_IMAGE_SUFFIXES`` / ``character_tools.DEFAULT_IMAGE_SUFFIXES``.
@@ -282,11 +164,8 @@ def list_images(
 ) -> list[Path]:
     """List image files from a source file or directory.
 
-    A file that looks like an image returns ``[source]`` (a non-image file
-    returns ``[]``); a directory returns the non-recursive image list by
-    default (hidden names skipped, sorted by name). With ``recursive=True``
-    the directory is walked with ``Path.rglob``, hidden path parts are
-    skipped, and results are sorted by path string. ``suffixes=None`` uses
+    A directory lists its direct images by name, or with ``recursive=True``
+    every image outside hidden paths by path. ``suffixes=None`` uses
     :data:`DEFAULT_IMAGE_SUFFIXES`.
     """
     src = Path(source).expanduser()
@@ -357,12 +236,7 @@ def _collect_images(
 
 
 def content_hash(path: str | Path) -> str:
-    """Return the lowercase sha256 hex digest of the full file bytes.
-
-    The file is read in 1 MiB chunks so large images never need to be held
-    fully in memory. Raises :class:`FileNotFoundError` if *path* is not a
-    file.
-    """
+    """Return the lowercase sha256 hex digest of the full file bytes."""
     target = Path(path).expanduser()
     if not target.is_file():
         raise FileNotFoundError(f"image not found: {target}")
@@ -374,15 +248,7 @@ def content_hash(path: str | Path) -> str:
 
 
 def average_hash(path: str | Path, *, hash_size: int = HASH_SIZE) -> int:
-    """Return the Pillow average hash (aHash) of an image as an int.
-
-    Opens *path*, converts it to greyscale, resizes it to
-    ``hash_size x hash_size`` (default 8 → 64-bit hash), compares each pixel
-    to the mean (1 when above the mean, else 0), and packs the bits into an
-    int. Only Pillow is used; the image is never written. Raises
-    :class:`FileNotFoundError` if *path* is not a file and :class:`ValueError`
-    for a non-positive ``hash_size``.
-    """
+    """Return the Pillow average hash (aHash) of an image as an int."""
     size = _validate_hash_size(hash_size)
     target = Path(path).expanduser()
     if not target.is_file():
@@ -430,9 +296,7 @@ def find_exact_duplicates(
 ) -> list[DuplicateGroup]:
     """Group images with identical sha256 digests into groups of size ≥ 2.
 
-    *sources* may be a single path or a sequence of directories/files.
-    Groups are returned sorted by digest; each group's ``paths`` follow the
-    deterministic listing order.
+    *sources* is one path or a sequence of them. Groups are sorted by digest.
     """
     images = _collect_images(sources, recursive=recursive, suffixes=suffixes)
     by_digest: dict[str, list[Path]] = {}
@@ -456,11 +320,8 @@ def find_near_duplicates(
 ) -> list[DuplicateGroup]:
     """Cluster images by aHash seed-neighbour greedy clustering.
 
-    Locks the documented approach: compute aHash for every image, sort paths
-    by name (ties by resolved path string), then greedily build clusters
-    around each remaining seed, pulling in every unassigned image within
-    ``threshold`` Hamming bits of the seed (not transitive full closure).
-    Only clusters with at least two members are reported.
+    See "Matching" in the module docstring. Only clusters of two or more are
+    returned.
     """
     limit = _validate_threshold(threshold)
     size = _validate_hash_size(hash_size)
@@ -516,10 +377,8 @@ def plan_thin(
 ) -> ThinPlan:
     """Choose the keeper and drop paths for one :class:`DuplicateGroup`.
 
-    All member paths are resolved to absolute paths and checked to exist.
-    ``keep_policy`` must be one of :data:`KEEP_POLICIES`; see the module
-    docstring for each policy's rule. Raises :class:`ValueError` for a bad
-    policy or a group with fewer than two paths.
+    Paths are resolved and must exist. Raises :class:`ValueError` for a
+    policy not in :data:`KEEP_POLICIES` or a group of fewer than two paths.
     """
     policy = _validate_keep_policy(keep_policy)
     resolved = tuple(Path(path).expanduser().resolve() for path in group.paths)
@@ -564,11 +423,9 @@ def thin_groups(
 ) -> ThinResult:
     """Plan (dry-run) or perform (commit) thinning for many groups.
 
-    Dry-run (default) validates every keep/drop plan and writes nothing.
-    Commit trashes every drop via ``lib_safety.trash(path, companions=True,
-    hook=hook)`` — companions first, then the image. All plans are validated
-    before the first trash; on the first trash failure the function stops and
-    raises (earlier drops stay trashed).
+    Every plan is validated before the first trash. On commit each drop is
+    trashed with its companions; the first failure stops and raises, and
+    earlier drops stay trashed.
     """
     hook = hook or NULL_HOOK
     batch = (groups,) if isinstance(groups, DuplicateGroup) else groups

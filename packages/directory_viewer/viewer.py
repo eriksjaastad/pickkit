@@ -1,142 +1,51 @@
 """Inventory image-bearing directories across one or more roots.
 
-This module is the single source of truth for directory-viewer behaviour: how
-a root is discovered (flat-if-direct-images else one-level subdirs), how image
-files are recognised (the shared intake suffix set), how per-directory
-inventories are sampled and summarised, and how the thin CLI wraps the
-library. The private precursor was a Flask grid UI over a parent directory
-with crop/trash actions; pickkit's directory-viewer is a **library + thin
-CLI** that only reads the filesystem and reports — it never mutates a file,
-never writes an audit file, and never touches the spine manifest.
+``pickkit-viewer`` reports which directories under a root hold images, how
+many, and of which types. It is read-only: it never writes, moves or trashes
+a file, writes no audit log and needs no intake'd batch.
 
-Principles
-----------
-Read-only
-    Every public operation is pure inspection. No commit, no trash, no
-    move-to-crop, no audit file; the module never writes to the filesystem.
-Library first
-    :func:`list_images_in` / :func:`inventory` / :func:`compare_roots` are the
-    whole behaviour; the CLI is a thin wrapper around them.
-Optional middle tool, not a spine step
-    :data:`intake_init.PUBLIC_SPINE_STEPS` stays ``intake`` /
-    ``review_select`` / ``multi_crop`` / ``finish_package``.
-    directory-viewer never adds a step, never requires an intake'd batch, and
-    never touches ``.pickkit/project.json`` (``finished_at``, ``steps``, or
-    ``metrics``).
-No cross-plugin hard dependency
-    This module mirrors the small listing helper locally so it runs without
-    importing any other pickkit plugin.
+Usage::
 
-Discovery semantics
--------------------
-Given a root directory, :func:`inventory` locks this public-safe discovery:
+    pickkit-viewer inventory ROOT [--sample N] [--json]
+    pickkit-viewer compare ROOT [ROOT ...] [--sample N] [--json]
 
-1. If the root itself contains at least one image file (non-recursive,
-   recognised suffixes) the root is treated as **one** image directory
-   (``mode="flat"``). Subdirectories are **not** scanned in that case.
-2. Otherwise only the root's **immediate** subdirectories are scanned (one
-   level). Every non-hidden subdirectory that contains at least one image
-   (non-recursive in that subdirectory) becomes a :class:`DirInventory`
-   entry, sorted by subdirectory name. Empty and non-image subdirectories are
-   omitted from the inventory list. Hidden names (starting with ``.``) are
-   skipped at every level.
+The default output is text: per directory its name, image count and count per
+extension. Exit status is 1 when a root is missing or not a directory.
 
-Images are recognised by :data:`DEFAULT_IMAGE_SUFFIXES` — the same set as
-``intake_init`` / ``character_tools`` / ``duplicate_finder``: ``.png .jpg
-.jpeg .webp .tif .tiff .bmp .gif`` (lowercase, with dots). The set is not
-PNG-only. Suffix matching is case-insensitive.
+Options
+-------
+``--sample N``
+    How many image names to include per directory in the ``--json``
+    ``images`` list (``sample_limit``; default :data:`DEFAULT_SAMPLE_LIMIT`,
+    20). ``0`` includes none and ``-1`` all; counts are always complete. The
+    text output shows no names.
+``--json``
+    Print JSON instead: one report object for ``inventory``, an array for
+    ``compare``.
 
-Sampling
---------
-Each :class:`DirInventory` stores ``image_count`` as the full non-recursive
-image count for that directory, and ``images`` as a sorted tuple of
-**basenames** (never full paths). ``sample_limit`` caps how many basenames
-are stored:
-
-``None`` or negative
-    Store every basename (``None`` means all).
-``0``
-    Store no basenames (counts-only inventory).
-``N > 0``
-    Store the first ``N`` sorted basenames.
-
-The default is :data:`DEFAULT_SAMPLE_LIMIT` = 20 for CLI friendliness; pass
-``sample_limit=None`` to include every basename.
-
-by_ext
-------
-``by_ext`` maps lowercase extension **without** the dot to the full image
-count for that extension, e.g. ``{"png": 3, "jpg": 2}``. Keys are kept in
-sorted order when serialising.
+Discovery
+---------
+If the root itself holds at least one image, it is the only directory
+reported (mode ``flat``) and subdirectories are not scanned. Otherwise each
+non-hidden immediate subdirectory that holds images is reported, sorted by
+name (mode ``subdirs``). Scans are never recursive below that one level.
+``by_ext`` maps each lowercase extension without the dot to its count, e.g.
+``{"png": 3, "jpg": 2}``. Images are files with a suffix in
+:data:`DEFAULT_IMAGE_SUFFIXES`, in any case; hidden names are skipped.
 
 Public API
 ----------
 ``DEFAULT_IMAGE_SUFFIXES``
-    Tuple of raster-image suffixes (lowercase, with dots); the same set as
-    intake_init / character_tools / duplicate_finder.
-``OPERATION``
-    Operation name for this middle tool: ``directory_viewer``. Read-only
-    tooling, so no audit event is ever recorded.
-``DEFAULT_SAMPLE_LIMIT``
-    Default ``sample_limit`` (20).
+``OPERATION = "directory_viewer"``
+    Named for symmetry with the other tools; no audit event is recorded.
+``DEFAULT_SAMPLE_LIMIT = 20``
 ``list_images_in(dir, *, suffixes=None) -> list[Path]``
-    Non-recursive image files directly inside *dir* (hidden names skipped,
-    sorted by name). ``suffixes=None`` uses ``DEFAULT_IMAGE_SUFFIXES``.
 ``inventory(root, *, suffixes=None, sample_limit=DEFAULT_SAMPLE_LIMIT) -> RootReport``
-    Inventory one root directory using the discovery semantics above.
 ``compare_roots(roots, *, suffixes=None, sample_limit=DEFAULT_SAMPLE_LIMIT) -> list[RootReport]``
-    Inventory each root in order; refuses with FileNotFoundError /
-    NotADirectoryError for a missing or non-directory root.
 ``DirInventory``
-    Frozen dataclass: ``name`` (directory basename), ``path`` (the directory
-    as given, ``~`` expanded), ``image_count`` (full non-recursive count),
-    ``images`` (sorted basename sample, see Sampling), and ``by_ext``
-    (lowercase extension without dot -> full count).
 ``RootReport``
-    Frozen dataclass: ``root`` (as given, ``~`` expanded), ``mode``
-    (``"flat"`` or ``"subdirs"``), ``directories`` (DirInventory entries in
-    deterministic order), and ``total_images`` (sum of image_count over the
-    entries).
 ``build_parser()``
-    Return the argparse parser for the ``pickkit-viewer`` CLI. The parser
-    description is this module docstring; subcommands are ``inventory`` and
-    ``compare``.
 ``main(argv=None)``
-    CLI entry point; parses args, dispatches, prints text or JSON, and
-    returns 0 on success / exits 1 on missing roots.
-
-CLI
----
-    pickkit-viewer inventory ROOT [--sample N] [--json]
-    pickkit-viewer compare ROOT [ROOT ...] [--sample N] [--json]
-
-Default output is human-readable text: per directory the name, image_count,
-and a by_ext summary. ``--json`` prints serialisable report(s): ``inventory``
-prints one report object and ``compare`` prints a JSON array of report
-objects. ``--sample N`` maps to ``sample_limit`` (default 20); ``--sample 0``
-gives a counts-only inventory (empty images tuples) and ``--sample -1`` is
-treated as ``None`` (store all basenames). Exit status is 0 on success and 1
-when a root is missing or not a directory. ``python -m directory_viewer``
-runs the same CLI.
-
-Examples
---------
-    from directory_viewer import inventory, compare_roots
-
-    report = inventory("sandbox/batch_a")
-    report.mode                                     # "flat"
-    report.directories[0].by_ext                    # {"png": 4}
-    reports = compare_roots(["sandbox/batch_a", "sandbox/other"])
-    reports[0].total_images                         # 4
-
-Out of scope
-------------
-The Flask/Tk grid UI (multi-directory viewer with click-to-crop and trash
-actions) is **out of scope** — no web server, templates, or browser UI, and
-no Flask import. Mutations of any kind (move-to-crop-queue, trash) are future
-work, not this module's job. directory-viewer never extends
-``PUBLIC_SPINE_STEPS``, never requires intake, never mutates the spine
-manifest, and never writes an audit file (read-only tooling).
 """
 
 from __future__ import annotations
@@ -146,6 +55,20 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+
+#: Names the ``directory_viewer`` package re-exports.
+__all__ = [
+    "DEFAULT_IMAGE_SUFFIXES",
+    "DEFAULT_SAMPLE_LIMIT",
+    "OPERATION",
+    "DirInventory",
+    "RootReport",
+    "build_parser",
+    "compare_roots",
+    "inventory",
+    "list_images_in",
+    "main",
+]
 
 #: Raster-image suffixes used by list/inventory (lowercase, with dots); same
 #: set as ``intake_init.DEFAULT_IMAGE_SUFFIXES`` / character_tools /
@@ -195,12 +118,9 @@ def _sample_cap(sample_limit: object) -> int | None:
 
 
 def list_images_in(dir: str | Path, *, suffixes: object = None) -> list[Path]:
-    """Return the non-recursive image files directly inside *dir*.
+    """Return the non-hidden image files directly inside *dir*, sorted by name.
 
-    Hidden names (starting with ``.``) are skipped and results are sorted by
-    name. ``suffixes=None`` uses :data:`DEFAULT_IMAGE_SUFFIXES`. Raises
-    :class:`FileNotFoundError` for a missing path and
-    :class:`NotADirectoryError` when *dir* is not a directory.
+    ``suffixes=None`` uses :data:`DEFAULT_IMAGE_SUFFIXES`.
     """
     target = _as_path(dir)
     if not target.exists():
@@ -278,17 +198,11 @@ def inventory(
     suffixes: object = None,
     sample_limit: object = DEFAULT_SAMPLE_LIMIT,
 ) -> RootReport:
-    """Inventory one root directory using the locked discovery semantics.
+    """Inventory one root directory (see "Discovery" in the module docstring).
 
-    If *root* itself contains at least one image file (non-recursive) the
-    report is flat mode with the root as the single :class:`DirInventory`;
-    otherwise immediate non-hidden subdirectories are scanned one level and
-    every subdirectory with at least one image becomes an entry (empty and
-    non-image subdirectories are omitted). ``sample_limit`` caps the stored
-    basenames per entry (None or negative = all, 0 = none, N = first N); the
-    default is :data:`DEFAULT_SAMPLE_LIMIT` (20). Raises
-    :class:`FileNotFoundError` for a missing root and
-    :class:`NotADirectoryError` when *root* is not a directory.
+    ``sample_limit`` caps the stored names per entry: None or negative for
+    all, 0 for none, N for the first N. Raises :class:`FileNotFoundError` /
+    :class:`NotADirectoryError` for a missing or non-directory root.
     """
     target = _as_path(root)
     if not target.exists():
@@ -323,12 +237,7 @@ def compare_roots(
     suffixes: object = None,
     sample_limit: object = DEFAULT_SAMPLE_LIMIT,
 ) -> list[RootReport]:
-    """Inventory each root in order and return one :class:`RootReport` each.
-
-    *roots* may be a single path or a sequence of paths. Each root is handed
-    to :func:`inventory`, so a missing root raises :class:`FileNotFoundError`
-    and a non-directory root raises :class:`NotADirectoryError`.
-    """
+    """Run :func:`inventory` on each of *roots* (one path or a sequence), in order."""
     if isinstance(roots, (str, Path)):
         raw: list[object] = [roots]
     else:

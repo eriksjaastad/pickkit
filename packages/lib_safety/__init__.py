@@ -1,18 +1,22 @@
 """lib_safety: shared safety primitives for pickkit plugins.
 
-Submodule docstrings are the single source of truth for behaviour:
+Every pickkit tool that touches files goes through these, so the same rules
+hold everywhere:
 
-* ``lib_safety.companions`` — companion discovery and move-with-companions.
-* ``lib_safety.trash`` — recoverable deletes via ``send2trash``.
-* ``lib_safety.guards`` — no-overwrite / no-in-place-write enforcement.
-* ``lib_safety.audit`` — audit events and hook interfaces.
-* ``lib_safety.batch`` — small helpers shared by the batch engines.
-* ``lib_safety.errors`` — exception types.
-* ``lib_safety.webui`` — Flask helpers shared by the web UIs. Not imported
-  here, so ``import lib_safety`` stays Flask-free.
+1. Move, don't modify: originals are relocated, never rewritten in place.
+2. Companions stay together: an image's same-stem sidecars (``.yaml``,
+   ``.yml``, ``.txt``, ``.caption``, ``.json``, ``.xmp``) move and trash
+   with it.
+3. No clobber: a move or write refuses any existing destination.
+4. Trash, don't unlink: deletes go to the OS trash and can be recovered.
+5. New files only: pixel writes such as crops need a path that does not
+   exist yet (``require_new_file``).
+6. Audit: moves, trash deletes and refused writes can emit an ``AuditEvent``.
 
-This package re-exports the public names listed in :data:`__all__` (see
-the tuple below) so plugins can import them from ``lib_safety`` directly.
+The names in ``__all__`` come from ``audit``, ``batch``, ``companions``,
+``errors``, ``guards`` and ``trash``; each submodule's docstring documents
+its own. ``lib_safety.webui`` holds the Flask helpers for the web UIs and is
+not imported here, so ``import lib_safety`` stays Flask-free.
 """
 
 from .audit import (

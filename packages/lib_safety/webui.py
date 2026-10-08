@@ -1,32 +1,17 @@
 """Small Flask helpers shared by the pickkit web UIs.
 
-The review, crop and finish UIs each used to carry their own copy of these;
-this module is the one copy they import. It imports Flask, so
-``lib_safety/__init__`` deliberately does not import it: ``import lib_safety``
-stays Flask-free. Every error message is part of the UIs' contracts and must
-stay byte-identical.
+``lib_safety/__init__`` does not import this module, so ``import
+lib_safety`` stays Flask-free. The error messages are part of the UIs' output
+and must stay byte-identical.
 
 Public API
 ----------
 ``require_intaked_root(batch_root)``
-    Resolve *batch_root* and return it. Raises :class:`FileNotFoundError`
-    when it does not exist or has no ``.pickkit/project.json``, and
-    :class:`NotADirectoryError` when it is not a directory.
 ``safe_image_path(batch_root, rel_or_name)``
-    Resolve *rel_or_name* under *batch_root* and return the absolute
-    :class:`pathlib.Path`. Refuses ``..`` escapes and absolute paths outside
-    the root with :class:`ValueError`.
 ``send_batch_image(root, rel)``
-    Flask response with the bytes of *rel* under *root*; aborts with 404 for
-    escapes and missing files.
 ``run_app(create_app, batch_root, *, title, hint, host, port)``
-    Validate *batch_root*, build the app with *create_app*, print the two
-    start-up lines (``pickkit <title> UI: ...`` and *hint*) and serve it.
+    Prints ``pickkit <title> UI: <url>  (batch: <root>)`` and *hint*, then serves.
 ``check_ui_args(parser, args, *, default_host, default_port, conflicts, conflicting)``
-    The shared ``--ui`` / ``--host`` / ``--port`` CLI checks. Exits through
-    ``parser.error`` when ``--host`` / ``--port`` differ from their defaults
-    without ``--ui``, or when ``--ui`` is given and *conflicting* is true
-    (*conflicts* names the CLI's other flags, e.g. ``"--commit/--force"``).
 """
 
 from __future__ import annotations

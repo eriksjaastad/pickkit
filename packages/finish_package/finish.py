@@ -1,234 +1,98 @@
 r"""Close a pickkit batch: finish the manifest and stage a copy-only delivery ZIP.
 
-This module is the single source of truth for finish-package behaviour: how a
-batch is validated as intake'd, how the allowlist is loaded from the intake
-inventory, which content roots are scanned, how every scanned file is
-classified against the allowlist and the default bans, how the copy-only
-delivery ZIP is written (never modifying source bytes), and how the manifest
-is closed on commit. The private precursor had an interactive wizard UI,
-client project IDs, pre-made delivery paths, rclone upload tips, and SQLite
-wiring; pickkit's finish-package is a library + thin CLI + local web wizard
-that only reads source files and writes its own ZIP plus manifest/audit
-updates.
+``pickkit-finish <batch_root>`` scans the batch's delivery content, sorts every
+file into eligible or an excluded bucket, and prints the report. It writes
+nothing unless ``--commit`` is given. Source files are only ever read.
 
-Principles
-----------
-Library first
-    :func:`finish_package` is the whole behaviour; the CLI in this module is a
-    thin wrapper around it.
-Interactive UI
-    ``pickkit-finish <batch_root> --ui`` starts the local Flask wizard in
-    ``finish_package.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8767
-    defaults, and are only valid together with ``--ui``). The page opens on
-    a dry-run eligible/excluded preview and writes nothing until **Commit
-    ZIP** (the same write as ``--commit``). The Force checkbox matches
-    ``--force``: it may overwrite an existing ZIP only, never source bytes.
-Batch must be intake'd
-    ``<batch_root>/.pickkit/project.json`` must already exist (created by
-    intake-init). Anything else is refused with :class:`FileNotFoundError`
-    before any ZIP is written.
-Allowlist from inventory
-    The allowlist is ``allowedExtensions`` from
-    ``<batch_root>/.pickkit/allowed_ext.json`` (lowercase, no dots). A missing
-    inventory is refused with :class:`FileNotFoundError` before any ZIP is
-    written. :func:`load_allowlist` is the single loader.
-Content roots
-    By default the scan is the union of :data:`SELECTED_DIR_NAME`
-    (``__selected``) and :data:`CROPPED_DIR_NAME` (``__cropped``) under the
-    batch root when they exist; missing roots are skipped. ``__crop`` (the
-    review-select crop queue), ``__reject``, and ``.pickkit/`` are never
-    scanned by default. The library ``content=`` / CLI ``--content`` override
-    selects a single explicit directory that must resolve under the batch
-    root, and is still subject to the allowlist, ban, and hidden rules.
-Allowlist + bans
-    A file is eligible when its lowercase, dot-free extension is in the
-    allowlist and no ban applies. Evaluation order is
-    ``hidden`` -> ``no_extension`` -> ``banned_ext`` -> ``banned_pattern`` ->
-    ``not_allowed`` -> else ``eligible``. Bans win over the allowlist: a
-    banned extension is never included even when it appears in
-    ``allowedExtensions``.
-Default bans (public kit; hardcoded module constants documented here)
-    * ``hidden`` — any path with a hidden path part (a segment starting with
-      ``.``). This keeps ``.pickkit`` out even if it were somehow scanned.
-    * ``no_extension`` — extensionless files.
-    * ``banned_ext`` — :data:`DEFAULT_BANNED_EXTENSIONS` (lowercase, no dots):
-      ``json``, ``md``, ``log``, ``csv``, ``sqlite``, ``db``, ``lock``.
-    * ``banned_pattern`` — basenames matching any regex in
-      :data:`DEFAULT_BANNED_PATTERNS` (``.*\.project\.(json|yml)$``).
-    v1 hardcodes these defaults; a future override hook/arg for custom bans is
-    out of scope (see Out of scope).
-Dry-run vs commit
-    Default is dry-run (``commit=False``): the eligible/excluded report is
-    computed and **nothing** is written — no ZIP, no ``finished_at``, no
-    metrics write, no finish.jsonl, no audit.jsonl. The inventory and manifest
-    may still be read. ``--commit`` / ``commit=True`` writes the ZIP and then
-    updates the manifest.
-ZIP destination
-    Default: ``<batch_root>/delivery.zip`` — :data:`DEFAULT_ZIP_NAME`. The
-    library ``output_zip=`` / CLI ``--output`` override accepts an explicit
-    path; relative paths resolve under the batch root and absolute paths are
-    allowed. ``lib_safety.require_new_file`` refuses an existing ZIP unless
-    ``force=True`` / ``--force``. ``force`` may overwrite the ZIP only, never
-    a source image: the existing ZIP is unlinked only after confirming the
-    resolved ZIP path is not one of the scanned source files.
-ZIP member names
-    Arcnames are paths relative to the batch root, preserving content-root
-    prefixes (``__selected/img_001.png``, ``__cropped/img_002.png``).
-    ``.pickkit/...`` never appears in the archive.
-Copy-only
-    Compression is ``zipfile.ZIP_STORED`` (documented default). Eligible files
-    are streamed with ``ZipFile.write``; source file bytes are never modified.
-Companions
-    Same-stem sidecars under the scanned content trees are included when they
-    pass the allowlist and bans (a normal walk is enough). A companion with a
-    banned or not-allowed extension is excluded under the matching bucket; v1
-    has no strict-fail companion-integrity mode.
-Manifest close (commit only)
-    On successful commit the manifest is updated: top-level ``finished_at`` is
-    set to ``utc_now()`` (ISO-8601 UTC ``Z``); the ``steps`` entry named
-    :data:`FINISH_PACKAGE_STEP_NAME` gets ``started_at`` set when null,
-    ``finished_at`` set, and ``images_processed`` set to the count of eligible
-    files whose suffix is an image suffix per intake's
-    ``DEFAULT_IMAGE_SUFFIXES``; and ``metrics.stager`` is filled with the
-    snake_case shape reserved by intake-init.
-Audit and finish log (commit only)
-    One ``finish_package`` audit event is appended to
-    ``<batch_root>/.pickkit/audit.jsonl`` via ``lib_safety.JsonlAuditHook``
-    and to the optional caller hook. A best-effort append-only summary record
-    is also written to ``<batch_root>/.pickkit/finish.jsonl``. Dry-run records
-    an event on the caller hook only and writes no audit.jsonl / finish.jsonl.
+Usage::
+
+    pickkit-finish tmp/batch_a                    # dry-run report; writes nothing
+    pickkit-finish tmp/batch_a --commit           # write delivery.zip, close the manifest
+    pickkit-finish tmp/batch_a --commit --force   # overwrite an existing ZIP
+    pickkit-finish tmp/batch_a --ui               # local web wizard
+
+Options
+-------
+``--commit``
+    Write the ZIP, then close the manifest. Without it nothing is written: no
+    ZIP, no manifest change, no audit.jsonl or finish.jsonl.
+``--force``
+    Overwrite an existing ZIP. Refused if the ZIP path is one of the scanned
+    source files, so a source is never overwritten.
+``--content DIR``
+    Scan this one directory instead of the default roots. It must resolve
+    under the batch root; the allowlist, bans and hidden rule still apply.
+``--output PATH``
+    Write the ZIP to PATH instead of ``<batch_root>/delivery.zip``. Relative
+    paths resolve under the batch root; absolute paths are allowed.
+``--ui``
+    Start the local finish wizard (``finish_package.ui``). It opens on a
+    dry-run preview and writes nothing until Commit ZIP. ``--host`` /
+    ``--port`` override its 127.0.0.1:8767 bind and are only valid with
+    ``--ui``, which cannot be combined with the flags above.
+
+Files
+-----
+The batch must be intake'd: ``.pickkit/project.json`` and the inventory
+``.pickkit/allowed_ext.json`` (its ``allowedExtensions`` list is the
+allowlist) must exist, or the run is refused before any ZIP is written.
+
+The scan covers ``__selected/`` and ``__cropped/`` when they exist.
+``__crop/``, ``__reject/`` and ``.pickkit/`` are never scanned by default.
+
+On commit the ZIP is written with ``ZIP_STORED``; member names are paths
+relative to the batch root (``__selected/img_001.png``). Then the manifest
+gets top-level ``finished_at``; the ``finish_package`` step gets
+``started_at`` (if null), ``finished_at`` and ``images_processed`` (eligible
+images); and ``metrics.stager`` gets ``zip``, ``eligible_count``,
+``by_ext_included``, ``excluded_counts`` and ``incoming_by_ext``. Finally one
+``finish_package`` event is appended to ``.pickkit/audit.jsonl`` and a
+summary record to ``.pickkit/finish.jsonl``.
+
+Classification
+--------------
+Each scanned file takes the first bucket that matches, in this order:
+
+* ``hidden``: a path part starts with ``.``;
+* ``no_extension``;
+* ``banned_ext``: json, md, log, csv, sqlite, db, lock;
+* ``banned_pattern``: the basename matches ``.*\.project\.(json|yml)$``;
+* ``not_allowed``: the extension is not in the allowlist;
+* otherwise eligible.
+
+Bans win over the allowlist. Same-stem companions are classified like any
+other file.
 
 Public API
 ----------
 ``finish_package(batch_root, *, commit=False, force=False, content=None, output_zip=None, hook=None)``
-    Validate *batch_root* is intake'd, load the allowlist, scan the content
-    roots, classify files, and either return a dry-run report (default) or
-    write the delivery ZIP and close the manifest (``commit=True``). Raises
-    :class:`FileNotFoundError` when the batch is missing/not intake'd or the
-    inventory is missing, :class:`ValueError` when ``content`` resolves outside
-    the batch root, and :class:`RefusedWriteError` when the ZIP exists without
-    ``force``. Returns a :class:`FinishResult`.
+    Dry-run report or commit; returns a :class:`FinishResult`.
 ``FinishResult``
-    Frozen dataclass describing one run: ``batch_root``, ``commit``,
-    ``zip_path`` (``Path | None``; None on dry-run), ``eligible_count``,
-    ``by_ext_included``, ``excluded_counts``, ``incoming_by_ext``,
-    ``finished_at`` (``str | None``; None on dry-run), ``manifest_path``,
-    ``audit_path``, and ``finish_log_path``.
 ``load_manifest(path)``
-    Read ``.pickkit/project.json`` and return it as a ``dict``. Raises
-    :class:`ManifestError` (a :class:`ValueError` whose message names *path*)
-    when the path is missing, a directory, unreadable, not valid UTF-8, not
-    valid JSON, or JSON that is not an object (array, number, string, bool,
-    or null).
+    Read ``project.json`` as a dict; raises :class:`ManifestError`.
 ``load_allowlist(path)``
-    Read an intake inventory JSON and return its ``allowedExtensions`` as a
-    ``set[str]`` of lowercase, dot-free extensions. Raises
-    :class:`FileNotFoundError` when the file is missing and
-    :class:`ValueError` when ``allowedExtensions`` is not a list.
+    Read an inventory's ``allowedExtensions`` as a lowercase, dot-free set.
 ``classify_file(path, batch_root, *, allowed)``
-    Classify one file against the default bans and *allowed* extension set and
-    return one of :data:`EXCLUDED_BUCKETS` or ``"eligible"``, applying the
-    documented evaluation order.
+    One of :data:`EXCLUDED_BUCKETS`, or ``"eligible"``.
 ``default_content_roots(batch_root)``
-    Return the default content roots as a list of :class:`Path`: the existing
-    ``__selected`` / ``__cropped`` directories under *batch_root*, in that
-    order. Missing roots are skipped.
+    The existing ``__selected`` and ``__cropped`` directories, in that order.
 ``build_parser()``
-    Return the argparse parser for the ``pickkit-finish`` CLI. The parser
-    description is this module docstring. ``--commit`` writes the ZIP and
-    closes the manifest; ``--force`` allows overwriting an existing ZIP;
-    ``--content`` overrides the content directory; ``--output`` overrides the
-    ZIP path; ``--ui`` starts the interactive web wizard from
-    ``finish_package.ui`` (``--host`` / ``--port`` override its bind and are
-    only valid together with ``--ui``).
 ``main(argv=None)``
-    CLI entry point; parses args and calls :func:`finish_package`.
 ``EXCLUDED_BUCKETS``
-    Tuple of the excluded-count bucket names, in documented order:
-    ``("hidden", "banned_ext", "banned_pattern", "not_allowed",
-    "no_extension")``.
-``PICKKIT_DIR_NAME``
-    Shared pickkit state directory name: ``.pickkit`` (matching intake-init).
-``MANIFEST_NAME``
-    Shared manifest filename under ``.pickkit``: ``project.json``.
-``INVENTORY_NAME``
-    Shared intake inventory filename under ``.pickkit``: ``allowed_ext.json``.
-``AUDIT_NAME``
-    Shared audit filename under ``.pickkit``: ``audit.jsonl``.
-``FINISH_LOG_NAME``
-    Optional append-only finish summary filename under ``.pickkit``:
-    ``finish.jsonl``.
-``FINISH_PACKAGE_STEP_NAME``
-    Name of the public spine step this plugin owns in ``project.json``:
-    ``finish_package``.
-``DEFAULT_ZIP_NAME``
-    Default delivery ZIP filename under the batch root: ``delivery.zip``.
-``SELECTED_DIR_NAME``
-    Locked public keep directory name: ``__selected`` (matching review-select).
-``CROPPED_DIR_NAME``
-    Locked public crop-output directory name: ``__cropped`` (matching
-    multi-crop).
-``CROP_QUEUE_DIR_NAME``
-    Locked public crop-queue directory name: ``__crop`` (never scanned by
-    default; matching multi-crop).
-``REJECT_DIR_NAME``
-    Locked public reject directory name: ``__reject`` (never scanned by
-    default; matching review-select).
+``PICKKIT_DIR_NAME = ".pickkit"``
+``MANIFEST_NAME = "project.json"``
+``INVENTORY_NAME = "allowed_ext.json"``
+``AUDIT_NAME = "audit.jsonl"``
+``FINISH_LOG_NAME = "finish.jsonl"``
+``FINISH_PACKAGE_STEP_NAME = "finish_package"``
+``DEFAULT_ZIP_NAME = "delivery.zip"``
+``SELECTED_DIR_NAME = "__selected"``
+``CROPPED_DIR_NAME = "__cropped"``
+``CROP_QUEUE_DIR_NAME = "__crop"``
+``REJECT_DIR_NAME = "__reject"``
 ``DEFAULT_BANNED_EXTENSIONS``
-    Tuple of banned extensions (lowercase, no dots): ``json``, ``md``,
-    ``log``, ``csv``, ``sqlite``, ``db``, ``lock``.
 ``DEFAULT_BANNED_PATTERNS``
-    Tuple of banned basename regex strings: ``.*\.project\.(json|yml)$``.
-``OPERATION``
-    Audit operation recorded for a successful finish-package run:
-    ``finish_package``.
-
-Examples
---------
-Dry-run a batch (default; writes nothing) from the library::
-
-    from finish_package import finish_package
-
-    result = finish_package("tmp/batch_a")
-    result.commit            # False
-    result.zip_path          # None
-    result.eligible_count    # 2
-
-Commit the delivery ZIP and close the manifest::
-
-    from finish_package import finish_package
-
-    result = finish_package("tmp/batch_a", commit=True)
-    result.zip_path           # tmp/batch_a/delivery.zip
-    result.finished_at        # '2026-09-26T12:34:56Z'
-
-Finish a batch from the CLI (dry-run, then commit)::
-
-    pickkit-finish tmp/batch_a
-    pickkit-finish tmp/batch_a --commit --force
-
-Finish a batch interactively::
-
-    pickkit-finish tmp/batch_a --ui
-
-Interactive wizard
-------------------
-``pickkit-finish <batch_root> --ui`` starts the local Flask finish wizard from
-``finish_package.ui``. It binds ``127.0.0.1:8767`` by default (``--host`` /
-``--port`` override it and are only valid together with ``--ui``), always
-opens with a dry-run preview of the eligible/excluded report, and confirms
-before writing the delivery ZIP. The wizard is documented in the module
-docstring of ``finish_package.ui``; every refresh and commit still calls
-:func:`finish_package` in this module.
-
-Out of scope
-------------
-Custom bans JSON files / allowlist override files (v1 hardcodes
-``DEFAULT_BANNED_EXTENSIONS`` + ``DEFAULT_BANNED_PATTERNS``), uploading the
-ZIP (rclone etc.), strict companion-integrity failure mode, and scanning
-``__crop`` / ``__reject`` / batch-root loose files by default are **not**
-this module's job. Desktop/Tk wizard variants and middle-spine tools are out
-of scope too.
+``OPERATION = "finish_package"``
 """
 
 from __future__ import annotations
@@ -255,6 +119,32 @@ from lib_safety import (
     write_manifest,
 )
 from lib_safety.audit import utc_now
+
+#: Names the ``finish_package`` package re-exports.
+__all__ = [
+    "AUDIT_NAME",
+    "CROPPED_DIR_NAME",
+    "CROP_QUEUE_DIR_NAME",
+    "DEFAULT_BANNED_EXTENSIONS",
+    "DEFAULT_BANNED_PATTERNS",
+    "DEFAULT_ZIP_NAME",
+    "EXCLUDED_BUCKETS",
+    "FINISH_LOG_NAME",
+    "FINISH_PACKAGE_STEP_NAME",
+    "INVENTORY_NAME",
+    "MANIFEST_NAME",
+    "OPERATION",
+    "PICKKIT_DIR_NAME",
+    "REJECT_DIR_NAME",
+    "SELECTED_DIR_NAME",
+    "FinishResult",
+    "build_parser",
+    "classify_file",
+    "default_content_roots",
+    "finish_package",
+    "load_allowlist",
+    "main",
+]
 
 #: Shared pickkit state directory and file names (matching intake-init).
 PICKKIT_DIR_NAME = ".pickkit"
@@ -315,12 +205,11 @@ _COMPILED_BANNED_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 class FinishResult:
     """What :func:`finish_package` computed (dry-run) or wrote (commit).
 
-    ``zip_path`` is the written ZIP on commit and ``None`` on dry-run.
-    ``finished_at`` is the ISO-8601 UTC ``Z`` manifest close time on commit
-    and ``None`` on dry-run. ``by_ext_included`` counts eligible files per
-    lowercase, dot-free extension; ``excluded_counts`` always carries all
-    :data:`EXCLUDED_BUCKETS` keys; ``incoming_by_ext`` counts every non-hidden
-    scanned file with an extension before the allow/ban filter.
+    ``zip_path`` and ``finished_at`` are ``None`` on dry-run.
+    ``by_ext_included`` counts eligible files per lowercase, dot-free
+    extension; ``excluded_counts`` always carries every
+    :data:`EXCLUDED_BUCKETS` key; ``incoming_by_ext`` counts every non-hidden
+    scanned file with an extension, before the allow/ban filter.
     """
 
     batch_root: Path
@@ -368,8 +257,8 @@ def load_manifest(path: str | Path) -> dict[str, object]:
     """Read *path* and return the manifest as a JSON object.
 
     Raises :class:`ManifestError` naming *path* when the path is missing, not
-    a regular file, unreadable, not valid UTF-8, not valid JSON, or JSON that
-    is not an object (``[]``, a number, a string, a bool, or ``null``).
+    a regular file, unreadable, not valid UTF-8, not valid JSON, or not an
+    object.
     """
     manifest_path = Path(path).expanduser()
     try:
@@ -446,10 +335,8 @@ def classify_file(
 ) -> str:
     """Classify one file against the default bans and the *allowed* set.
 
-    Returns one of :data:`EXCLUDED_BUCKETS` (``hidden``, ``no_extension``,
-    ``banned_ext``, ``banned_pattern``, ``not_allowed``) or ``"eligible"``,
-    applying the documented order: hidden -> no_extension -> banned_ext ->
-    banned_pattern -> not_allowed -> eligible.
+    Returns the first matching bucket in the order hidden -> no_extension ->
+    banned_ext -> banned_pattern -> not_allowed, else ``"eligible"``.
     """
     file_path = Path(path).expanduser()
     root = Path(batch_root).expanduser()
@@ -472,12 +359,7 @@ def classify_file(
 
 
 def default_content_roots(batch_root: str | Path) -> list[Path]:
-    """Return the existing default content roots under *batch_root*.
-
-    The default scan is the union of :data:`SELECTED_DIR_NAME` and
-    :data:`CROPPED_DIR_NAME`; missing roots are skipped. The returned list is
-    ordered ``__selected`` then ``__cropped`` for deterministic scans.
-    """
+    """Return the existing ``__selected`` and ``__cropped`` dirs, in that order."""
     root = Path(batch_root).expanduser().resolve()
     candidates = (root / SELECTED_DIR_NAME, root / CROPPED_DIR_NAME)
     return [path for path in candidates if path.is_dir()]
@@ -617,26 +499,19 @@ def finish_package(
 ) -> FinishResult:
     """Finish *batch_root*: stage a copy-only delivery ZIP and close the manifest.
 
-    Default is dry-run: the content roots are scanned and the eligible /
-    excluded report is returned with **no** filesystem writes (no ZIP, no
-    manifest changes, no audit.jsonl / finish.jsonl). The caller *hook*, when
-    given, still receives one ``finish_package`` dry-run event.
+    Dry-run by default: returns the report and writes nothing, though the
+    caller *hook* still gets one dry-run event. ``commit=True`` writes the ZIP,
+    closes the manifest and appends to audit.jsonl and finish.jsonl (see the
+    module docstring). ``force=True`` overwrites an existing ZIP, never a
+    scanned source.
 
-    With ``commit=True`` the delivery ZIP is written first (default
-    ``<batch_root>/delivery.zip``, or ``output_zip``), then the manifest is
-    closed: top-level ``finished_at``, the ``finish_package`` step, and
-    ``metrics.stager`` are updated, one audit event is appended to
-    ``<batch_root>/.pickkit/audit.jsonl`` plus the caller *hook*, and a summary
-    record is appended to ``<batch_root>/.pickkit/finish.jsonl``.
-
-    Refuses with :class:`FileNotFoundError` when the batch root is missing, not
-    a directory, not intake'd, or has no inventory; with :class:`ManifestError`
-    when ``project.json`` cannot be read as a JSON object; with
-    :class:`ValueError` when ``content`` resolves outside the batch root; and
-    with :class:`RefusedWriteError` when the ZIP already exists without
-    ``force``, and with :class:`FinishLogError` when the ZIP and manifest
-    close succeeded but the audit or finish log could not be written.
-    ``force=True`` overwrites an existing ZIP only (never a scanned source).
+    Raises :class:`FileNotFoundError` / :class:`NotADirectoryError` for a bad
+    batch root or ``content`` directory, a batch that is not intake'd or a
+    missing inventory;
+    :class:`ManifestError` when ``project.json`` is not a JSON object;
+    :class:`ValueError` when ``content`` is outside the batch root;
+    :class:`RefusedWriteError` when the ZIP exists without ``force``; and
+    :class:`FinishLogError` when the commit succeeded but a log write failed.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():

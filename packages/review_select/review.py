@@ -1,124 +1,66 @@
 """Apply review triage decisions to an intake'd pickkit batch.
 
-This module is the single source of truth for review-select behaviour: how a
-batch is validated as intake'd, how ``keep`` / ``crop`` / ``reject`` decisions
-are routed into the locked public destination directories, how the append-only
-decision log is written, how the ``review_select`` step in ``project.json`` is
-updated, and how each decision is audited. The private precursor reviewer was
-an interactive web tool with client-specific IDs, taxonomies, and training
-wiring; pickkit's review-select is a small batch library that only moves files
-and appends logs — it never rewrites pixels and never invents recommendations.
+``pickkit-review <batch_root>`` sorts images into keep / crop / reject. Each
+decision moves the image and its same-stem companions together into a
+destination directory under the batch root; files are never copied,
+overwritten or rewritten. Reject is a move to ``__reject``, not a delete.
+It prints a JSON summary.
 
-Principles
-----------
-Library first
-    :func:`apply_decisions` is the whole behaviour; the CLI in this module is a
-    thin wrapper around it.
-Interactive UI
-    ``pickkit-review <batch_root> --ui`` starts the local Flask review page in
-    ``review_select.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8765
-    defaults). The UI calls :func:`apply_decisions` for every action — it
-    never reimplements moves, logs, or manifest updates. Keyboard shortcuts
-    on that page are ``K`` / ``1`` keep, ``C`` / ``2`` crop, and ``R`` / ``3``
-    reject.
-Batch must be intake'd
-    ``<batch_root>/.pickkit/project.json`` must already exist (created by
-    intake-init). Anything else is refused with :class:`FileNotFoundError`
-    before any file is moved or any destination directory is created.
-Public destinations
-    keep routes to ``__selected``, crop queues to ``__crop`` (no pixel rewrite
-    here), and reject routes to ``__reject`` — see :data:`KEEP_DIR_NAME`,
-    :data:`CROP_DIR_NAME`, and :data:`REJECT_DIR_NAME`. Destination directories
-    are created only on first need by this plugin; intake never creates them.
-Move, never modify
-    Each decision moves the image plus its same-stem companions with
-    ``lib_safety.move_with_companions`` into the destination directory.
-    Originals are never overwritten in place and pixels are never rewritten.
-    Reject means move to ``__reject``, not trash — trash is for a later
-    cleanup plugin.
-Decision log
-    One JSON object per applied decision is appended to
-    ``<batch_root>/.pickkit/decisions.jsonl`` with snake_case keys:
-    ``timestamp``, ``action``, ``source``, ``destination``, ``companions``
-    (relative paths from the batch root), plus ``note`` only when a note was
-    given. Existing lines are never read or rewritten.
-Manifest step update
-    The existing ``review_select`` entry in ``project.json`` ``steps`` is
-    updated in place: ``started_at`` is set on the first applied decision when
-    null, ``images_processed`` increments per applied decision, and
-    ``finished_at`` is set only when the caller passes the explicit ``finish``
-    flag (CLI ``--finish``). No finish ZIP is created here.
-Audit
-    Every applied decision is recorded through a ``JsonlAuditHook`` on
-    ``<batch_root>/.pickkit/audit.jsonl`` and on the optional caller hook.
-Refuse, never invent
-    Unknown actions, sources outside the batch root, missing sources, and
-    destinations that already exist are all refused before anything is moved.
-    review-select never invents AI recommendations.
+Usage::
+
+    pickkit-review tmp/batch_a --ui                        # local web UI
+    pickkit-review tmp/batch_a --decisions decisions.jsonl --finish
+    pickkit-review tmp/batch_a --keep img_001.png --crop img_002.png --reject img_003.png
+
+Options
+-------
+``--decisions PATH``
+    A JSON array, or a ``.jsonl`` file with one object per line, of
+    ``{"source": ..., "action": "keep|crop|reject", "note": ...}``.
+``--keep PATH`` / ``--crop PATH`` / ``--reject PATH``
+    One image (relative to the batch root) per flag; each is repeatable.
+    Use these or ``--decisions``, not both.
+``--finish``
+    Set the step's ``finished_at`` after at least one decision is applied.
+``--ui``
+    Start the local review page (``review_select.ui``); keys K/C/R or 1/2/3.
+    ``--host`` / ``--port`` override its 127.0.0.1:8765 bind and are only
+    valid with ``--ui``, which cannot be combined with the flags above.
+
+Destinations
+------------
+keep moves to ``__selected``, crop queues to ``__crop`` (for multi-crop) and
+reject moves to ``__reject`` (:data:`KEEP_DIR_NAME`, :data:`CROP_DIR_NAME`,
+:data:`REJECT_DIR_NAME`; the valid actions are :data:`ACTIONS`). A directory
+is created the first time it is needed.
+
+Every decision is checked before anything moves: an unknown action, a
+duplicate or missing source, a source outside the batch root, or an existing
+destination refuses the whole run.
+
+Files
+-----
+The batch must be intake'd (``.pickkit/project.json`` must exist). Each
+applied decision appends one record to ``.pickkit/decisions.jsonl`` with
+``timestamp``, ``action``, ``source``, ``destination`` and ``companions``
+(paths relative to the batch root), plus ``note`` when given; appends a
+``move`` and a ``review_select`` event to ``.pickkit/audit.jsonl``; and
+updates the ``review_select`` step (``started_at`` on the first decision,
+``images_processed`` per decision).
 
 Public API
 ----------
 ``apply_decisions(batch_root, decisions, *, finish=False, hook=None)``
-    Validate *batch_root* is intake'd, then move each :class:`Decision`'s
-    source (with companions) into the destination directory for its action,
-    append decision-log records, audit, and update the manifest
-    ``review_select`` step. With ``finish=True`` (CLI ``--finish``) the
-    step's ``finished_at`` is set after the decisions are applied. Returns an
+    Validate, then apply every :class:`Decision`; returns an
     :class:`ApplyResult`.
 ``Decision``
-    Frozen dataclass describing one triage decision: ``source`` (image path or
-    relative name under the batch root), ``action`` (one of :data:`ACTIONS`),
-    optional ``note``, and ``timestamp`` (UTC ``Z`` by default). Unknown
-    actions are refused at construction.
 ``ApplyResult``
-    Frozen dataclass describing an applied run: ``batch_root``,
-    ``decisions_applied``, ``destinations_touched``, ``finished``,
-    ``manifest_path``, and ``decisions_log_path``.
 ``load_decisions(path)``
-    Read decisions from a JSON array file or a JSONL file (one
-    ``{"source": ..., "action": ..., "note": ...}`` object per line) and
-    return them as a list of :class:`Decision`.
+    Read a ``--decisions`` file into a list of :class:`Decision`.
 ``KEEP_DIR_NAME`` / ``CROP_DIR_NAME`` / ``REJECT_DIR_NAME``
-    Locked public destination directory names: ``__selected`` / ``__crop`` /
-    ``__reject``.
 ``KEEP`` / ``CROP`` / ``REJECT`` / ``ACTIONS``
-    Snake_case action constants and the tuple of all valid actions
-    (``("keep", "crop", "reject")``).
 ``build_parser()``
-    Return the argparse parser for the ``pickkit-review`` CLI. The parser
-    description is this module docstring. ``--decisions`` loads a JSON/JSONL
-    decisions file; ``--keep`` / ``--crop`` / ``--reject`` accept one image
-    path each and are repeatable; ``--finish`` marks the step finished after
-    applying; ``--ui`` starts the interactive web UI from ``review_select.ui``
-    (with optional ``--host`` / ``--port`` overrides for its 127.0.0.1:8765
-    defaults).
 ``main(argv=None)``
-    CLI entry point; parses args and calls :func:`apply_decisions` (or
-    :func:`review_select.ui.run_ui` when ``--ui`` is set).
-
-Examples
---------
-Apply one keep decision from the library::
-
-    from review_select import Decision, apply_decisions
-
-    result = apply_decisions("tmp/batch_a", [Decision("img_001.png", "keep")])
-    result.decisions_applied        # 1
-    result.destinations_touched     # ("__selected",)
-
-Triage a batch from the CLI::
-
-    pickkit-review tmp/batch_a --decisions decisions.jsonl --finish
-
-Out of scope
-------------
-Pixel crops (multi-crop), trash/recycle of rejects (a later cleanup plugin),
-AI recommendations, finish ZIP packaging (finish-package), and
-client-specific taxonomy/prompts are **not** this module's job. Interactive
-UI is **no longer** out of scope: ``review_select.ui`` implements the local
-Flask review page and ``pickkit-review <batch_root> --ui`` starts it (see
-that module's docstring for UI behaviour, host/port, keyboard shortcuts, and
-UI-specific deferrals).
 """
 
 from __future__ import annotations
@@ -146,6 +88,23 @@ from lib_safety import (
     write_manifest,
 )
 from lib_safety.audit import utc_now
+
+#: Names the ``review_select`` package re-exports.
+__all__ = [
+    "ACTIONS",
+    "CROP",
+    "CROP_DIR_NAME",
+    "KEEP",
+    "KEEP_DIR_NAME",
+    "REJECT",
+    "REJECT_DIR_NAME",
+    "ApplyResult",
+    "Decision",
+    "apply_decisions",
+    "build_parser",
+    "load_decisions",
+    "main",
+]
 
 #: Shared pickkit state directory and file names (matching intake-init).
 PICKKIT_DIR_NAME = ".pickkit"
@@ -186,10 +145,9 @@ OPERATION = "review_select"
 class Decision:
     """One triage decision: a source image, an action, and optional metadata.
 
-    ``source`` may be a path relative to the batch root (``img_001.png``) or
-    an absolute path under the batch root. ``timestamp`` defaults to the UTC
-    time the :class:`Decision` was created; callers may pass their own ISO-8601
-    ``Z`` time. Unknown actions are refused at construction.
+    ``source`` is relative to the batch root or an absolute path under it.
+    ``timestamp`` defaults to creation time (UTC ``Z``). Unknown actions are
+    refused at construction.
     """
 
     source: str
@@ -283,20 +241,12 @@ def apply_decisions(
 ) -> ApplyResult:
     """Apply *decisions* to an already intake'd batch under *batch_root*.
 
-    For each decision the source image and its same-stem companions are moved
-    (never copied, never rewritten) into the destination directory for the
-    action: ``__selected`` / ``__crop`` / ``__reject``. One JSON record is
-    appended to ``<batch_root>/.pickkit/decisions.jsonl`` per applied decision,
-    the ``review_select`` step in ``<batch_root>/.pickkit/project.json`` is
-    updated (``started_at`` on first decision, ``images_processed`` bumped,
-    ``finished_at`` only with ``finish=True``), and events are recorded on
-    ``<batch_root>/.pickkit/audit.jsonl`` plus the optional caller *hook*.
-
-    Refuses with :class:`FileNotFoundError` if *batch_root* is missing, not a
-    directory, or not intake'd (no ``project.json`` manifest). All decisions
-    are validated before anything is moved; a missing source, unknown action,
-    duplicate source, or existing destination aborts the whole call without
-    creating destination directories.
+    Moves each source and its companions into its action's directory and
+    writes the log, audit and manifest records described in the module
+    docstring; events also go to *hook* when given. ``finish=True`` sets the
+    step's ``finished_at`` if at least one decision is applied. All decisions
+    are validated first, so a refusal moves nothing and creates no directory.
+    Raises :class:`FileNotFoundError` for a missing or un-intake'd batch root.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():
@@ -404,12 +354,10 @@ def _record_to_decision(
 
 
 def load_decisions(path: str | Path) -> list[Decision]:
-    """Load decisions from a JSON array file or a JSONL file.
+    """Load decisions from a JSON array file or a ``.jsonl`` file.
 
-    A ``.jsonl`` file is read one JSON object per line; any other file is read
-    as a JSON array of ``{"source": ..., "action": ..., "note": ...}`` objects.
-    Blank JSONL lines are skipped. Extra keys (such as the decision-log fields
-    written by :func:`apply_decisions`) are ignored.
+    Each object needs ``source`` and ``action`` and may have ``note``. Extra
+    keys are ignored, so a ``decisions.jsonl`` log can be read back.
     """
     return load_json_records(path, "decisions file", _record_to_decision)
 

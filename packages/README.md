@@ -2,16 +2,13 @@
 
 One directory per plugin or shared library.
 
-| Directory | Plugin | Status |
-|-----------|--------|--------|
-| `pickkit_core/` | shared core (version, constants) | stub — this scaffold |
-| `lib_safety/` | move-not-modify originals, companions together, trash deletes, audit | implemented |
-| `intake_init/` | point at a directory; manifest; sidecars/tracking; step recording; safety baseline | implemented |
-| `review_select/` | triage into keep / crop / reject; log decisions | implemented |
-| `multi_crop/` | create NEW crops only; never overwrite originals | implemented |
-| `finish_package/` | close manifest; stage delivery ZIP | implemented |
-| `character_tools/` | assign images to user-supplied named bins + companions | implemented (library+CLI) |
-| `duplicate_finder/` | find exact/near-duplicate images; thin extras into OS trash | implemented (library+CLI) |
-| `directory_viewer/` | read-only multi-directory image inventory; compare roots | implemented (library+CLI) |
-
-TBD middle tools: `lib_metrics`.
+| Directory | What it does |
+|-----------|--------------|
+| `lib_safety/` | Shared safety primitives: companions, trash, no-overwrite, audit |
+| `intake_init/` | `pickkit-intake`: manifest, inventory and audit baseline under `.pickkit/` |
+| `review_select/` | `pickkit-review`: keep / crop / reject triage, with a web UI |
+| `multi_crop/` | `pickkit-crop`: NEW crop files only, with a web UI |
+| `finish_package/` | `pickkit-finish`: close the manifest and stage a delivery ZIP, with a web wizard |
+| `character_tools/` | `pickkit-character`: sort images into named bins |
+| `duplicate_finder/` | `pickkit-dupes`: find duplicates and trash the extras |
+| `directory_viewer/` | `pickkit-viewer`: read-only directory inventory |
