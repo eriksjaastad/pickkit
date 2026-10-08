@@ -13,7 +13,3 @@ Large batches make "undo" expensive if the tool rewrote pixels or deleted quietl
 - **Failing closed** on overwrite and partial companion moves.
 
 If a default feels strict (refused crop destination, dry-run finish, backup on re-intake), that is the recovery bias talking.
-
-## Related
-
-- [docs/case-study-journal-index.md](case-study-journal-index.md) — incident→guardrail research index (no private prose)

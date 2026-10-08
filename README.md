@@ -99,13 +99,7 @@ Flags: `pickkit-character --help`, `pickkit-dupes --help`, `pickkit-viewer --hel
 
 ## Status
 
-Public toolkit on GitHub: [eriksjaastad/pickkit](https://github.com/eriksjaastad/pickkit) (MIT). Spine GUIs (review / crop / finish) and middle-tool library+CLI set shipped; directory-viewer grid UI is follow-on. Case-study website chapters are a later follow-up. Plan: [PLAN.md](PLAN.md). How to run a command: its `--help`. Why the safeguards are strict: [docs/safeguards.md](docs/safeguards.md). Publish checklist: [docs/publish-checklist.md](docs/publish-checklist.md). Issues: [ISSUES.md](ISSUES.md).
-
-## Case study research
-
-Journal citation index (paths + incident→guardrail themes only; no secrets):
-[docs/case-study-journal-index.md](docs/case-study-journal-index.md).
-Feeds future case-study chapters; do not paste private journal prose into this tree.
+Public toolkit on GitHub: [eriksjaastad/pickkit](https://github.com/eriksjaastad/pickkit) (MIT). Spine GUIs (review / crop / finish) and middle-tool library+CLI set shipped; directory-viewer grid UI is follow-on. Case-study website chapters are a later follow-up. How to run a command: its `--help`. Why the safeguards are strict: [docs/safeguards.md](docs/safeguards.md). Issues: [ISSUES.md](ISSUES.md).
 
 ## License
 
