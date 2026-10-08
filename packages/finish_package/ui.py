@@ -1,136 +1,60 @@
 """Local Flask finish wizard for pickkit finish-package.
 
-This module is the single source of truth for the interactive finish wizard:
-how the eligible/excluded dry-run report is previewed for an already intake'd
-batch, how the Force checkbox and optional content/output overrides map onto
-``finish_package.finish``, how the copy-only delivery ZIP is committed only
-after confirmation, and how the small Flask app is assembled and run. The
-batch engine itself (scanning, classification, ZIP writing, manifest close,
-audit) is ``finish_package.finish.finish_package``; the UI never reimplements
-ZIP logic, scanning rules, or manifest close.
+Started by ``pickkit-finish <batch_root> --ui``. The batch must be intake'd.
+Every dry-run and commit calls ``finish_package.finish.finish_package``; the
+wizard has no ZIP, scanning or manifest logic of its own, re-reads the report
+from disk on every request, and never uploads the ZIP.
 
-Principles
-----------
-Engine only
-    Every dry-run and commit goes through
-    ``finish_package.finish.finish_package``. The UI never opens a
-    ``ZipFile``, unlinks a delivery ZIP, or writes ``finished_at`` / metrics
-    itself.
-Batch must be intake'd
-    ``<batch_root>/.pickkit/project.json`` must already exist (created by
-    intake-init). :func:`create_app` and :func:`run_ui` refuse anything else
-    with :class:`FileNotFoundError` before a server starts, mirroring the
-    refusal path of ``finish_package``.
-Dry-run first
-    The initial page load and every Refresh dry-run call
-    ``finish_package(..., commit=False)`` with the current form overrides and
-    write nothing. Commit is the only write path.
-Preview eligible vs excluded
-    The page shows ``eligible_count``, ``by_ext_included``,
-    ``excluded_counts`` (all ``EXCLUDED_BUCKETS`` keys), the planned ZIP path,
-    the content roots used, and short sample lists of eligible / excluded
-    relative paths (capped at ~20 each). Samples are built with the public
-    ``classify_file`` helper plus ``default_content_roots`` / the content
-    override; the UI never reimplements allow/ban rules.
-Report re-read from disk
-    Every status / refresh / commit response re-runs the engine and re-reads
-    the manifest, so the page never trusts a stale in-memory report.
-No auto-upload
-    The wizard only calls the engine; it never uploads the delivery ZIP or
-    writes outside the engine's chosen paths.
-
-Public API
-----------
-``DEFAULT_HOST``
-    Default bind host for :func:`run_ui`: ``127.0.0.1`` (local only).
-``DEFAULT_PORT``
-    Default bind port for :func:`run_ui`: ``8767`` (review-select uses
-    ``8765`` and multi-crop uses ``8766``, so all three UIs can run at once).
-``planned_zip_path(batch_root, output_zip=None)``
-    Return the ZIP path a commit would write for *batch_root*: the default
-    ``<batch_root>/delivery.zip`` (:data:`DEFAULT_ZIP_NAME`) or the
-    *output_zip* override resolved the same way the engine resolves it
-    (relative paths under the batch root, absolute paths allowed). A dry-run
-    ``FinishResult.zip_path`` is ``None``, so the wizard uses this helper to
-    display the planned path before committing.
-``content_roots_for_ui(batch_root, content=None)``
-    Return the content roots the engine will scan for *batch_root*: the
-    public ``default_content_roots`` list when *content* is ``None``, or a
-    single explicit directory resolved under the batch root (refusing
-    outside / missing / non-directory paths like the engine does).
-``sample_paths(batch_root, content=None, *, limit=20)``
-    Return ``{"eligible": [...], "excluded": [...]}`` short sample lists of
-    relative POSIX paths (capped at *limit* each) by walking the same content
-    roots and classifying each file with the public ``classify_file``.
-``create_app(batch_root)``
-    Build the Flask finish wizard app for *batch_root*.
-``run_ui(batch_root, *, host=DEFAULT_HOST, port=DEFAULT_PORT)``
-    Validate *batch_root* and start the Flask server on ``host:port``.
+The page opens on a dry-run preview: ``eligible_count``, ``by_ext_included``,
+``excluded_counts``, the planned ZIP path, the content roots, and up to 20
+sample eligible and excluded paths. Nothing is written until Commit ZIP.
 
 Buttons
 -------
-- **Refresh dry-run** — re-runs ``finish_package(..., commit=False)`` with
-  the current form overrides and refreshes the report. No writes.
-- **Commit ZIP** — calls ``finish_package(..., commit=True,
-  force=<checkbox>, content=<override or None>, output_zip=<override or
-  None>)``; after success the page shows the ZIP path and ``finished_at``.
-  The button is disabled once the manifest has ``finished_at`` or the planned
-  ZIP already exists, unless Force is checked.
-- **Force** checkbox — allows overwriting an existing delivery ZIP (never a
-  source image); required to re-commit after the batch is finished or the ZIP
-  already exists.
+- **Refresh dry-run**: re-run the dry-run with the form's content / output
+  overrides. Writes nothing.
+- **Commit ZIP**: commit with the Force checkbox and the overrides, then show
+  the ZIP path and ``finished_at``. Disabled once the manifest has
+  ``finished_at`` or the planned ZIP exists, unless Force is checked.
+- **Force**: allow overwriting an existing delivery ZIP, never a source image.
 
 Host / port
 -----------
-The wizard binds ``127.0.0.1:8767`` by default (see ``DEFAULT_HOST`` /
-``DEFAULT_PORT``). The ``pickkit-finish`` CLI overrides these with ``--host``
-and ``--port``, which are only valid together with ``--ui``. The server is
-local-only by default; binding a non-loopback interface is an explicit
-operator choice.
+Binds ``127.0.0.1:8767`` by default (``DEFAULT_HOST`` / ``DEFAULT_PORT``);
+``pickkit-finish --host`` / ``--port`` override it.
 
 Routes
 ------
 ``GET /``
-    Finish wizard page; initial load runs a dry-run and renders the report
-    plus the Force / content / output form.
+    The wizard page with a dry-run report.
 ``GET /api/status``
-    JSON dry-run report for the current (or ``?content=`` / ``?output=``
-    query) overrides: ``eligible_count``, ``by_ext_included``,
-    ``excluded_counts``, ``incoming_by_ext``, ``planned_zip``,
-    ``content_roots``, ``samples`` (eligible/excluded short lists),
-    ``committed`` / ``finished_at`` when already finished, and ``zip_exists``.
+    JSON dry-run report for optional ``?content=`` / ``?output=`` overrides:
+    ``eligible_count``, ``by_ext_included``, ``excluded_counts``,
+    ``incoming_by_ext``, ``planned_zip``, ``content_roots``, ``samples``,
+    ``committed``, ``finished_at`` and ``zip_exists``.
 ``POST /api/refresh``
-    JSON body ``{"content": "...", "output": "..."}`` (both optional). Runs
-    ``finish_package(..., commit=False)`` again with those overrides and
-    returns the same shape as ``GET /api/status``. No writes.
+    Body ``{"content": ..., "output": ...}`` (both optional). Same shape as
+    ``GET /api/status``; writes nothing.
 ``POST /api/commit``
-    JSON body ``{"force": false, "content": "...", "output": "..."}`` (all
-    optional). Calls ``finish_package(..., commit=True, ...)``; on success
-    returns the report plus ``zip_path`` and ``finished_at``. Collisions
-    without Force return 409 with a clear error (``RefusedWriteError`` /
-    ``FileExistsError``); missing batches/inventories return 404 and bad
-    overrides return 400. The body includes ``committed``: false when the
-    commit did not finish, and a JSON 500 with ``committed`` true when the
-    ZIP and manifest close succeeded but the follow-up summary could not be
-    re-read.
-Manifest read failures
-    Every route, including ``GET /``, answers JSON (never an HTML error page)
-    when ``project.json`` cannot be read. :func:`finish_package.finish.load_manifest`
-    raises :class:`~finish_package.finish.ManifestError` for a missing file,
-    a directory, an unreadable file, bad UTF-8, invalid JSON, or JSON that is
-    not an object. Flask error handlers map that error, and other expected engine errors (``ValueError``, ``NotADirectoryError``, ``FileNotFoundError``), to JSON. The app
-    is created only after intake, so these failures are ones that show up on
-    a later request.
+    Body ``{"force": false, "content": ..., "output": ...}`` (all optional).
+    Commits and returns the report plus ``zip_path`` and ``finished_at``.
+    Errors: 409 when the ZIP exists without force, 404 for a missing batch or
+    inventory, 400 for bad overrides (each with ``committed: false``), and 500
+    with ``committed: true`` when the commit succeeded but its log or the
+    follow-up report failed.
 
-Out of scope / Notes
---------------------
-- Uploading the delivery ZIP to remote storage is not part of this wizard.
-- Custom bans JSON files / allowlist override files, scanning ``__crop`` /
-  ``__reject`` / loose batch-root files by default (the engine decides; the
-  UI just displays), client project IDs, training databases, a Tk precursor
-  wizard, and middle-spine tools / card #7651 are out of scope.
-- Template: ``templates/finish.html`` is shipped as package data (see
-  ``pyproject.toml`` ``[tool.setuptools.package-data]``).
+Every route, ``GET /`` included, answers a bad ``project.json`` or inventory
+with a JSON error rather than an HTML error page.
+
+Public API
+----------
+``DEFAULT_HOST``
+``DEFAULT_PORT``
+``planned_zip_path(batch_root, output_zip=None)``
+``content_roots_for_ui(batch_root, content=None)``
+``sample_paths(batch_root, content=None, *, limit=20)``
+``create_app(batch_root)``
+``run_ui(batch_root, *, host=DEFAULT_HOST, port=DEFAULT_PORT)``
 """
 
 from __future__ import annotations
@@ -191,10 +115,8 @@ def content_roots_for_ui(
 ) -> list[Path]:
     """Return the content roots the engine will scan for *batch_root*.
 
-    With *content* ``None`` this is the public ``default_content_roots`` list;
-    otherwise it is a single explicit directory resolved under the batch root.
-    Outside / missing / non-directory overrides are refused the same way the
-    engine refuses them.
+    ``default_content_roots`` when *content* is ``None``, else the one
+    override directory, refused the same way the engine refuses it.
     """
     root = require_intaked_root(batch_root)
     if content is None:
@@ -220,10 +142,8 @@ def sample_paths(
 ) -> dict[str, list[str]]:
     """Return short sample lists of eligible / excluded relative POSIX paths.
 
-    Walks the same content roots the engine would scan and classifies every
-    file with the public :func:`finish_package.finish.classify_file` (and the
-    intake allowlist via :func:`load_allowlist`), so the UI never reimplements
-    allow/ban rules. Each list is capped at *limit* entries.
+    Walks the same content roots the engine scans and classifies each file
+    with the engine's :func:`classify_file`. Each list is capped at *limit*.
     """
     root = require_intaked_root(batch_root)
     allowed = load_allowlist(root / PICKKIT_DIR_NAME / INVENTORY_NAME)
@@ -247,10 +167,8 @@ def sample_paths(
 def _read_finished_at(root: Path) -> str | None:
     """Return the manifest's top-level ``finished_at`` string, or ``None``.
 
-    Uses :func:`finish_package.finish.load_manifest`. A missing file, a
-    directory, an unreadable file, bad UTF-8, invalid JSON, or a non-object
-    raises :class:`~finish_package.finish.ManifestError` naming the path
-    instead of looking like "not committed".
+    An unreadable manifest raises :class:`ManifestError` rather than looking
+    like "not committed".
     """
     data = load_manifest(root / PICKKIT_DIR_NAME / MANIFEST_NAME)
     finished_at = data.get("finished_at")
@@ -297,9 +215,6 @@ def create_app(batch_root: str | Path) -> Flask:
 
         The request-body checks below raise ``ValueError`` to reach it too.
         ``ManifestError`` is a ``ValueError`` and keeps its own handler.
-        A malformed allowlist used to be caught on ``GET /`` and shown in
-        the page; without this handler that request is an HTML 500 while
-        ``/api/status`` still returns the diagnostic.
         """
         return jsonify({"error": str(exc)}), 400
 

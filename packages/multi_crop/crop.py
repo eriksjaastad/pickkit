@@ -1,170 +1,74 @@
 """Create NEW cropped image files from axis-aligned pixel boxes.
 
-This module is the single source of truth for multi-crop behaviour: how a
-batch is validated as intake'd, how axis-aligned ``(left, top, right,
-bottom)`` pixel boxes are clamped to image bounds, how NEW raster files are
-written under ``__cropped`` (never overwriting originals), how the append-only
-crops log is written, how the ``multi_crop`` step in ``project.json`` is
-updated, and how each applied crop is audited. The private precursor had an
-interactive desktop UI with AI sidecar preload, client IDs, and training
-wiring; pickkit's multi-crop is a small batch library + thin CLI that only
-writes new cropped raster files and appends logs.
+``pickkit-crop <batch_root>`` writes each crop as a new file under
+``__cropped/`` in the batch. It never overwrites an existing file and never
+moves, deletes or rewrites a source; same-stem companions are left alone. It
+prints a JSON summary.
 
-Principles
-----------
-Library first
-    :func:`crop_batch` is the batch behaviour; the CLI in this module is a
-    thin wrapper around it. :func:`apply_crop` is the low-level single-crop
-    primitive and is usable standalone (no intake required).
-Interactive UI
-    ``pickkit-crop <batch_root> --ui`` starts the local Flask crop page in
-    ``multi_crop.ui`` (``--host`` / ``--port`` override the 127.0.0.1:8766
-    defaults). The UI calls :func:`crop_batch` for every Apply — it never
-    reimplements pixel writes, crops-log records, or manifest updates. Drag
-    an axis-aligned rectangle. Keyboard shortcuts are ``Enter`` apply,
-    ``S`` skip, and ``R`` reset the rectangle.
-Batch must be intake'd
-    ``<batch_root>/.pickkit/project.json`` must already exist (created by
-    intake-init). Batch mode refuses with :class:`FileNotFoundError` before
-    any crop is written or any directory is created.
-Inputs
-    Sources may live anywhere under the batch root. The typical input is the
-    review-select crop queue :data:`CROP_QUEUE_DIR_NAME` (``__crop``), but a
-    spec may point at any explicit relative or absolute source path under the
-    batch root.
-New files only, never overwrite
-    Every crop is written to a NEW path; ``lib_safety.require_new_file``
-    refuses any destination that already exists (including the source itself)
-    with :class:`lib_safety.errors.RefusedWriteError`. Sources are never
-    moved, deleted, or rewritten.
-Output directory
-    New rasters land under :data:`CROPPED_DIR_NAME` (``__cropped``) under the
-    batch root, created on first need only. The default destination basename
-    keeps the source stem + suffix (``img_002.png`` → ``__cropped/img_002.png``).
-    If that path exists the crop is refused — no silent rename. Callers who
-    need multiple crops of one source pass an explicit ``destination``.
-Crop geometry
-    Boxes are axis-aligned pixel boxes ``(left, top, right, bottom)`` with
-    Pillow ``Image.crop`` semantics: ``right``/``bottom`` are exclusive.
-    :func:`clamp_box` clamps every coordinate to the image bounds and
-    guarantees at least 1px width and height. Normalized [0,1] coordinates
-    and AI sidecar preload are not accepted.
-Companions left alone
-    Only the new cropped raster is written. Same-stem sidecars (yaml/txt)
-    are never copied, rewritten, or moved in v1.
-Crops log
-    One JSON object per applied crop is appended to
-    ``<batch_root>/.pickkit/crops.jsonl`` with snake_case keys: ``timestamp``,
-    ``source``, ``destination``, ``box`` (list ``[left, top, right, bottom]``),
-    plus ``note`` only when a note was given. Relative paths from the batch
-    root are preferred. Existing lines are never read or rewritten.
-Manifest step update
-    The existing ``multi_crop`` entry in ``project.json`` ``steps`` is
-    updated in place: ``started_at`` is set on the first applied crop when
-    null, ``images_processed`` increments per applied crop, and
-    ``finished_at`` is set only when the caller passes the explicit ``finish``
-    flag (CLI ``--finish``). No finish ZIP is created here.
-Audit
-    Each applied crop is recorded through a ``JsonlAuditHook`` on
-    ``<batch_root>/.pickkit/audit.jsonl`` and on the optional caller hook
-    with operation ``multi_crop``. Refused writes are audited through the
-    same hooks by ``require_new_file``.
+Usage::
+
+    pickkit-crop tmp/batch_a --ui                          # local web UI
+    pickkit-crop tmp/batch_a --crops crops.jsonl --finish
+    pickkit-crop tmp/batch_a --source __crop/img_002.png --box 10,10,50,40
+
+Options
+-------
+``--crops PATH``
+    A JSON array, or a ``.jsonl`` file with one object per line, of
+    ``{"source": ..., "box": [left, top, right, bottom], "destination": ...,
+    "note": ...}`` (``destination`` and ``note`` optional).
+``--source PATH`` / ``--box L,T,R,B``
+    One crop per pair; both repeatable and paired in order. Use these or
+    ``--crops``, not both.
+``--finish``
+    Set the step's ``finished_at`` after at least one crop is applied.
+``--ui``
+    Start the local crop page (``multi_crop.ui``). ``--host`` / ``--port``
+    override its 127.0.0.1:8766 bind and are only valid with ``--ui``, which
+    cannot be combined with the flags above.
+
+Boxes and destinations
+----------------------
+A box is ``(left, top, right, bottom)`` in whole pixels with Pillow semantics
+(right and bottom exclusive). It is clamped to the image and kept at least
+1x1 px. Sources can be anywhere under the batch root; the usual input is the
+review crop queue ``__crop/`` (:data:`CROP_QUEUE_DIR_NAME`). The default
+destination is ``__cropped/<source name>`` (:data:`CROPPED_DIR_NAME`); a
+relative ``destination`` is placed under ``__cropped/`` and an absolute one
+must be under the batch root. If a destination exists the crop is refused,
+never renamed. Every crop is checked before any is written.
+
+Files
+-----
+The batch must be intake'd: ``project.json`` (:data:`MANIFEST_NAME`) must
+exist under ``.pickkit/`` (:data:`PICKKIT_DIR_NAME`). Each applied crop
+appends one record to ``.pickkit/crops.jsonl`` (:data:`CROPS_LOG_NAME`) with
+``timestamp``, ``source``, ``destination`` and ``box``, plus ``note`` when
+given; one ``multi_crop`` event to ``.pickkit/audit.jsonl``
+(:data:`AUDIT_NAME`); and updates the :data:`MULTI_CROP_STEP_NAME` step
+(``started_at`` on the first crop, ``images_processed`` per crop).
 
 Public API
 ----------
-``CROPPED_DIR_NAME``
-    Locked public output directory name: ``__cropped`` (new crops out).
-``CROP_QUEUE_DIR_NAME``
-    Locked public crop-queue directory name: ``__crop`` (typical review-select
-    crop queue in). Documented as a convention, not required by this module.
-``PICKKIT_DIR_NAME``
-    Shared pickkit state directory name: ``.pickkit`` (matching intake-init).
-``MANIFEST_NAME``
-    Shared manifest filename under ``.pickkit``: ``project.json``.
-``AUDIT_NAME``
-    Shared audit filename under ``.pickkit``: ``audit.jsonl``.
-``CROPS_LOG_NAME``
-    Append-only crops log filename under ``.pickkit``: ``crops.jsonl``.
-``MULTI_CROP_STEP_NAME``
-    Name of the public spine step this plugin owns in ``project.json``:
-    ``multi_crop``.
+``CROPPED_DIR_NAME = "__cropped"``
+``CROP_QUEUE_DIR_NAME = "__crop"``
+``PICKKIT_DIR_NAME = ".pickkit"``
+``MANIFEST_NAME = "project.json"``
+``AUDIT_NAME = "audit.jsonl"``
+``CROPS_LOG_NAME = "crops.jsonl"``
+``MULTI_CROP_STEP_NAME = "multi_crop"``
 ``CropSpec``
-    Frozen dataclass describing one crop: ``source`` (image path or relative
-    name under the batch root), ``box`` (``(left, top, right, bottom)``
-    integer pixel box), optional ``destination`` (relative name under
-    ``__cropped`` or absolute path under the batch root), optional ``note``,
-    and ``timestamp`` (UTC ``Z`` by default).
 ``ApplyResult``
-    Frozen dataclass describing an applied run: ``batch_root``,
-    ``crops_applied``, ``destinations`` (relative paths of written crops),
-    ``finished``, ``manifest_path``, and ``crops_log_path``.
 ``clamp_box(box, width, height)``
-    Clamp *box* to a ``width`` x ``height`` image and return
-    ``(left, top, right, bottom)`` with at least 1px width and height.
 ``apply_crop(source, box, destination, *, hook=None)``
-    Open *source* with Pillow, clamp *box* to the image bounds, guard
-    *destination* with ``lib_safety.require_new_file``, and save a NEW
-    cropped raster there. Returns the destination :class:`Path`. Does not
-    require intake, does not touch companions, and records one ``multi_crop``
-    audit event on *hook* when given.
+    Crop one file to a new path; needs no intake.
 ``crop_batch(batch_root, specs, *, finish=False, hook=None)``
-    Validate *batch_root* is intake'd, then apply every :class:`CropSpec`,
-    writing each crop under ``__cropped`` (default) or the spec's explicit
-    ``destination``, appending crops-log records, auditing, and updating the
-    manifest ``multi_crop`` step. With ``finish=True`` (CLI ``--finish``) the
-    step's ``finished_at`` is set after crops are applied. Returns an
+    Validate, then apply every :class:`CropSpec`; returns an
     :class:`ApplyResult`.
 ``load_crop_specs(path)``
-    Read crop specs from a JSON array file or a JSONL file (one
-    ``{"source": ..., "box": [...], ...}`` object per line) and return them
-    as a list of :class:`CropSpec`.
+    Read a ``--crops`` file into a list of :class:`CropSpec`.
 ``build_parser()``
-    Return the argparse parser for the ``pickkit-crop`` CLI. The parser
-    description is this module docstring. ``--crops`` loads a JSON/JSONL
-    specs file; ``--source`` and ``--box`` accept one source and one
-    ``L,T,R,B`` box each, are repeatable, and pair positionally; ``--finish``
-    marks the step finished after applying; ``--ui`` starts the interactive
-    web UI from ``multi_crop.ui`` (with optional ``--host`` / ``--port``
-    overrides for its 127.0.0.1:8766 defaults).
 ``main(argv=None)``
-    CLI entry point; parses args and calls :func:`crop_batch` (or
-    :func:`multi_crop.ui.run_ui` when ``--ui`` is set).
-
-Examples
---------
-Crop one image from the library (no intake required)::
-
-    from multi_crop import apply_crop
-
-    apply_crop("img_002.png", (10, 10, 50, 40), "__cropped/img_002.png")
-
-Apply a batch from the crop queue::
-
-    from multi_crop import CropSpec, crop_batch
-
-    result = crop_batch(
-        "tmp/batch_a",
-        [CropSpec("__crop/img_002.png", (10, 10, 50, 40))],
-    )
-    result.crops_applied        # 1
-    result.destinations         # ("__cropped/img_002.png",)
-
-Crop a batch from the CLI::
-
-    pickkit-crop tmp/batch_a --crops crops.jsonl --finish
-
-Start the interactive crop UI::
-
-    pickkit-crop tmp/batch_a --ui
-
-Out of scope
-------------
-Interactive UI is **no longer** out of scope: ``multi_crop.ui`` implements
-the local Flask crop page and ``pickkit-crop <batch_root> --ui`` starts it
-(see that module's docstring for UI behaviour, host/port, shortcuts, box
-mapping, and routes). AI crop preload / training / SQLite, normalized
-[0,1] coordinates, moving/deleting sources after crop, finish-package ZIP
-staging, and companion sidecar rewriting are **not** this module's job.
 """
 
 from __future__ import annotations
@@ -192,6 +96,25 @@ from lib_safety import (
     write_manifest,
 )
 from lib_safety.audit import utc_now
+
+#: Names the ``multi_crop`` package re-exports.
+__all__ = [
+    "AUDIT_NAME",
+    "CROPPED_DIR_NAME",
+    "CROP_QUEUE_DIR_NAME",
+    "CROPS_LOG_NAME",
+    "MANIFEST_NAME",
+    "MULTI_CROP_STEP_NAME",
+    "PICKKIT_DIR_NAME",
+    "ApplyResult",
+    "CropSpec",
+    "apply_crop",
+    "build_parser",
+    "clamp_box",
+    "crop_batch",
+    "load_crop_specs",
+    "main",
+]
 
 #: Shared pickkit state directory and file names (matching intake-init).
 PICKKIT_DIR_NAME = ".pickkit"
@@ -243,11 +166,8 @@ def clamp_box(
 ) -> tuple[int, int, int, int]:
     """Clamp *box* to a ``width`` x ``height`` image and guarantee >=1px size.
 
-    Semantics match Pillow ``Image.crop((left, top, right, bottom))``:
-    ``right``/``bottom`` are exclusive. Every coordinate is clamped into the
-    image bounds; if the clamped box is empty (``right <= left`` or
-    ``bottom <= top``) it is nudged to the nearest valid 1px box inside the
-    image. *width* and *height* must be positive integers.
+    ``right``/``bottom`` are exclusive, as in Pillow ``Image.crop``. A box
+    that clamps to empty is nudged to the nearest 1px box inside the image.
     """
     left, top, right, bottom = _validate_box(box)
     if isinstance(width, bool) or not isinstance(width, int):
@@ -281,14 +201,10 @@ def clamp_box(
 class CropSpec:
     """One crop: a source image, a pixel box, and optional metadata.
 
-    ``source`` may be a path relative to the batch root (``img_002.png``) or
-    an absolute path under the batch root. ``box`` is an axis-aligned pixel
-    box ``(left, top, right, bottom)`` (``right``/``bottom`` exclusive).
-    ``destination``, when given, is a relative name under ``__cropped`` or an
-    absolute path under the batch root; when omitted the default keeps the
-    source stem + suffix under ``__cropped``. ``timestamp`` defaults to the
-    UTC time the :class:`CropSpec` was created. Invalid boxes are refused at
-    construction.
+    ``source`` is relative to the batch root or an absolute path under it.
+    ``destination`` defaults to ``__cropped/<source name>``; a relative one
+    goes under ``__cropped``. ``timestamp`` defaults to creation time (UTC
+    ``Z``). Invalid boxes are refused at construction.
     """
 
     source: str
@@ -369,14 +285,10 @@ def apply_crop(
 ) -> Path:
     """Crop *source* with *box* and save a NEW raster at *destination*.
 
-    Opens *source* with Pillow, clamps *box* to the image bounds with
-    :func:`clamp_box`, then refuses to write if *destination* already exists
-    (``lib_safety.require_new_file``) and saves the cropped image. The
-    destination's parent directory is created on first need. Returns the
-    destination :class:`Path`. Does not require intake, never touches
-    companions, and never modifies the source. With *hook* given, one
-    ``multi_crop`` audit event is recorded on success (refusals are recorded
-    by ``require_new_file``).
+    The box is clamped with :func:`clamp_box`; an existing *destination*
+    (the source included) raises :class:`RefusedWriteError`. Creates the
+    destination's parent directory if needed and returns the destination.
+    Needs no intake. Records one ``multi_crop`` event on *hook* on success.
     """
     source_path = Path(source).expanduser()
     if not source_path.is_file():
@@ -468,21 +380,11 @@ def crop_batch(
 ) -> ApplyResult:
     """Apply *specs* to an already intake'd batch under *batch_root*.
 
-    For each :class:`CropSpec` the source image is opened, the box is clamped
-    to the image bounds, and a NEW cropped raster is written under
-    ``__cropped`` (or the spec's explicit destination under the batch root).
-    One JSON record is appended to
-    ``<batch_root>/.pickkit/crops.jsonl`` per applied crop, the ``multi_crop``
-    step in ``<batch_root>/.pickkit/project.json`` is updated (``started_at``
-    on first crop, ``images_processed`` bumped, ``finished_at`` only with
-    ``finish=True``), and events are recorded on
-    ``<batch_root>/.pickkit/audit.jsonl`` plus the optional caller *hook*.
-
-    Refuses with :class:`FileNotFoundError` if *batch_root* is missing, not a
-    directory, or not intake'd (no ``project.json`` manifest). All specs are
-    validated before anything is written; a missing source, a source outside
-    the batch root, a duplicate destination, or an existing destination
-    aborts the whole call without creating crop files or log records.
+    Writes each crop and the log, audit and manifest records described in
+    the module docstring; events also go to *hook* when given.
+    ``finish=True`` sets the step's ``finished_at``. All specs are validated
+    first, so a refusal writes no crop and no log record. Raises
+    :class:`FileNotFoundError` for a missing or un-intake'd batch root.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():
@@ -580,12 +482,10 @@ def _record_to_crop_spec(record: object, path: Path, index: int) -> CropSpec:
 
 
 def load_crop_specs(path: str | Path) -> list[CropSpec]:
-    """Load crop specs from a JSON array file or a JSONL file.
+    """Load crop specs from a JSON array file or a ``.jsonl`` file.
 
-    A ``.jsonl`` file is read one JSON object per line; any other file is
-    read as a JSON array of
-    ``{"source": ..., "box": [left, top, right, bottom], ...}`` objects.
-    Blank JSONL lines are skipped. Extra keys are ignored.
+    Each object needs ``source`` and a 4-int ``box`` and may have
+    ``destination`` and ``note``. Extra keys are ignored.
     """
     return load_json_records(path, "crop specs file", _record_to_crop_spec)
 

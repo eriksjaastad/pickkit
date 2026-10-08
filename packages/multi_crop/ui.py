@@ -1,140 +1,74 @@
 """Local Flask crop UI for pickkit multi-crop.
 
-This module is the single source of truth for the interactive crop UI: how the
-pending image queue is listed from an already intake'd batch's ``__crop``
-directory, how drag-drawn axis-aligned rectangles are mapped from display
-pixels back to full-image pixels, how Apply / Skip / Reset actions map onto
-``multi_crop.crop``, how image bytes are served safely under the batch root,
-and how the small Flask app is assembled and run. The batch engine itself
-(pixel writes, crops log, manifest step, audit) is
-``multi_crop.crop.crop_batch``; the UI never reimplements pixel writes.
+Started by ``pickkit-crop <batch_root> --ui``. The batch must be intake'd.
+The page shows one pending image at a time; drag an axis-aligned rectangle
+and Apply. Every Apply calls ``multi_crop.crop.crop_batch`` with one integer
+box, so the UI never writes pixels or logs itself, and it never suggests
+boxes.
 
-Principles
-----------
-Engine only
-    Every Apply action calls ``crop_batch(batch_root,
-    [CropSpec(source, box)])`` immediately with an integer pixel box; the UI
-    never opens images, writes cropped rasters, writes logs, or updates the
-    manifest itself.
-Batch must be intake'd
-    ``<batch_root>/.pickkit/project.json`` must already exist (created by
-    intake-init). :func:`list_pending_images` and :func:`create_app` refuse
-    anything else with :class:`FileNotFoundError` before a server starts or a
-    queue is returned — the same refusal path as ``crop_batch``.
-Pending queue from disk
-    The queue is re-listed from disk on every request; the UI never trusts a
-    stale in-memory queue. A file is pending when it lives under
-    :data:`CROP_QUEUE_DIR_NAME` (``__crop``), has a lowercase suffix in
-    :data:`intake_init.intake.DEFAULT_IMAGE_SUFFIXES`, has no hidden path
-    part, and its engine-default destination ``__cropped/<same name>`` does
-    not exist yet. A missing or empty ``__crop`` queue yields a friendly
-    empty state.
-Sources stay put
-    The v1 engine writes the crop to ``__cropped`` and leaves the source in
-    ``__crop``. That is fine: the pending filter excludes names that already
-    have a crop, so a cropped source falls out of the queue naturally.
-Session state is in-memory only
-    ``cropped_this_session`` (apply count) and the skip set are Flask app
-    config values, reset on each server start. The pending list itself is
-    always re-read from disk.
-No AI
-    The UI never recommends boxes, preloads suggestions, trains, or reads
-    SQLite. Boxes come only from Erik's drag.
-
-Public API
-----------
-``DEFAULT_HOST``
-    Default bind host for :func:`run_ui`: ``127.0.0.1`` (local only).
-``DEFAULT_PORT``
-    Default bind port for :func:`run_ui`: ``8766`` (review-select uses
-    ``8765`` so both UIs can run at once).
-``CROP_QUEUE_DIR_NAME``
-    Reused from ``multi_crop.crop``: ``__crop``, the queue directory the UI
-    lists.
-``CROPPED_DIR_NAME``
-    Reused from ``multi_crop.crop``: ``__cropped``, the default destination
-    directory used by the pending filter.
-``list_pending_images(batch_root)``
-    Return the pending crop queue as a sorted list of absolute
-    :class:`pathlib.Path` objects under ``<batch_root>/__crop/`` (sorted by
-    relative POSIX path, stable), excluding images whose default destination
-    ``__cropped/<same name>`` already exists.
-``safe_image_path(batch_root, rel_or_name)``
-    Re-exported from :mod:`lib_safety.webui`, which documents it.
-``create_app(batch_root, *, session_cropped=None)``
-    Build the Flask app for *batch_root*. ``session_cropped`` seeds the
-    in-memory cropped counter (default ``0``).
-``run_ui(batch_root, *, host=DEFAULT_HOST, port=DEFAULT_PORT)``
-    Validate *batch_root* and start the Flask server on ``host:port``.
+The pending queue is re-read from disk on every request: images under
+``__crop/`` (:data:`CROP_QUEUE_DIR_NAME`), not hidden, whose default
+destination ``__cropped/<same name>`` (:data:`CROPPED_DIR_NAME`) does not
+exist yet. The source stays in ``__crop/``; once cropped it drops out of the
+queue. The skip set and cropped-this-session count reset when the server
+restarts. To finish the step, run ``pickkit-crop <batch_root> --finish``
+from the CLI.
 
 Keyboard shortcuts
 ------------------
-``Enter`` — apply crop (same as the ``Apply`` button)
-``S`` — skip (``Skip`` button): leave in queue, advance to next pending
-``R`` — reset rect (``Reset`` button): clear the drawn box
-
-The page buttons post those actions; the keyboard shortcuts are conveniences.
+``Enter`` apply the crop (the ``Apply`` button)
+``S`` skip: leave it in the queue and show the next (the ``Skip`` button)
+``R`` reset: clear the drawn box (the ``Reset`` button)
 
 Box mapping
 -----------
-Display pixels map back to full-image pixels like this:
+The image may be shown scaled. Display pixels map back to full-image pixels
+as::
 
     full_x = round(display_x * (naturalWidth / clientWidth))
     full_y = round(display_y * (naturalHeight / clientHeight))
 
-The image may be CSS-scaled (``max-width`` / ``max-height``). On
-mousedown/mousemove/mouseup the template records coordinates relative to the
-rendered image box and maps them with the formula above, clamps to
-``[0, naturalWidth]`` / ``[0, naturalHeight]``, and enforces at least a 1×1
-box (``right > left`` and ``bottom > top``) before Apply is enabled. The live
-readout shows ``(left, top, right, bottom)`` in full-image pixels; those ints
-are posted to ``POST /api/crop``. Pillow semantics: ``right``/``bottom`` are
-exclusive. ``multi_crop.crop.clamp_box`` is the final safety net.
+clamped to ``[0, naturalWidth]`` / ``[0, naturalHeight]``, with at least a
+1x1 box before Apply is enabled. The readout shows ``(left, top, right,
+bottom)`` in full-image pixels (right and bottom exclusive), and those ints
+are posted. ``multi_crop.crop.clamp_box`` is the final safety net.
 
 Host / port
 -----------
-The UI binds ``127.0.0.1:8766`` by default (see ``DEFAULT_HOST`` /
-``DEFAULT_PORT``). The ``pickkit-crop`` CLI overrides these with ``--host``
-and ``--port``, which are only valid together with ``--ui``. The server is
-local-only by default; binding a non-loopback interface is an explicit
-operator choice.
+Binds ``127.0.0.1:8766`` by default (``DEFAULT_HOST`` / ``DEFAULT_PORT``);
+``pickkit-crop --host`` / ``--port`` override it.
 
 Routes
 ------
 ``GET /``
-    Crop page: current pending head with a drag overlay, or a "queue empty"
-    state, plus the remaining and cropped-this-session counts.
+    The crop page.
 ``GET /api/status``
-    JSON: ``remaining`` (int, session queue excluding skipped),
-    ``cropped_this_session`` (int), ``current`` (relative POSIX path of the
-    pending head under the batch root, or null), and ``natural_size``
-    (``{width, height}`` for the current image, or null when it cannot be
-    read cheaply).
+    JSON ``remaining`` (excluding skipped), ``cropped_this_session``,
+    ``current`` (relative path of the pending head, or null) and
+    ``natural_size`` (``{width, height}``, or null when unreadable).
 ``POST /api/crop``
-    JSON body ``{"source": "<relative path>", "box": [L, T, R, B]}`` (ints,
-    Pillow exclusive right/bottom). Resolves the source safely, applies one
-    :class:`CropSpec` via :func:`multi_crop.crop.crop_batch` immediately, and
-    returns the next status JSON in the same shape as ``GET /api/status``.
-    Errors map to 400 (bad body / bad box / escape / outside root), 404
-    (source missing), or 409 (destination already exists —
-    ``RefusedWriteError`` / ``FileExistsError``) so the page never crashes.
+    Body ``{"source": "<relative path>", "box": [L, T, R, B]}``; applies one
+    crop and returns the next status. 400 for a bad body, box or path, 404 for
+    a missing source, 409 when the destination exists.
 ``POST /api/skip``
-    JSON body ``{"source": "<relative path>"}``. Adds the source to the
-    in-memory session skip set (it stays in ``__crop`` on disk) and returns
-    the next status JSON. The client can also advance by simply applying or
-    skipping; the skip set only affects the current server session.
+    Body ``{"source": "<relative path>"}``; skips it for this server session
+    and returns the next status.
 ``GET /image/<path:rel>``
-    Serve the original image bytes for a file under the batch root with Flask
-    ``send_file``; escape attempts and missing files return 404.
+    The image bytes; 404 for paths outside the batch root or missing files.
 
-Out of scope / Notes
---------------------
-- Finish: ``--finish`` stays CLI-only for now. The UI never shows a finish
-  wizard or a finish button.
-- AI crop suggestions, non-axis-aligned / rotated crops, moving sources out
-  of ``__crop`` after apply, and SQLite training are out of scope.
-- Template: ``templates/crop.html`` is shipped as package data (see
-  ``pyproject.toml`` ``[tool.setuptools.package-data]``).
+Public API
+----------
+``DEFAULT_HOST``
+``DEFAULT_PORT``
+``CROP_QUEUE_DIR_NAME``
+    Re-exported from ``multi_crop.crop``.
+``CROPPED_DIR_NAME``
+    Re-exported from ``multi_crop.crop``.
+``list_pending_images(batch_root)``
+``safe_image_path(batch_root, rel_or_name)``
+    Re-exported from :mod:`lib_safety.webui`.
+``create_app(batch_root, *, session_cropped=None)``
+``run_ui(batch_root, *, host=DEFAULT_HOST, port=DEFAULT_PORT)``
 """
 
 from __future__ import annotations
@@ -170,12 +104,8 @@ DEFAULT_PORT = 8766
 def list_pending_images(batch_root: str | Path) -> list[Path]:
     """Return the pending crop queue for an intake'd *batch_root*.
 
-    The queue is every visible file under ``<batch_root>/__crop/`` whose
-    lowercase suffix is in
-    :data:`intake_init.intake.DEFAULT_IMAGE_SUFFIXES`, skipping hidden path
-    parts, and excluding any file whose engine-default destination
-    ``__cropped/<same name>`` already exists. Returns absolute
-    :class:`pathlib.Path` objects sorted by relative POSIX path (stable).
+    Absolute paths of the non-hidden images under ``__crop/`` that have no
+    ``__cropped/<same name>`` yet, sorted by relative POSIX path.
     """
     root = require_intaked_root(batch_root)
     crop_dir = root / CROP_QUEUE_DIR_NAME
@@ -216,9 +146,7 @@ def create_app(
 ) -> Flask:
     """Build the Flask crop app for an intake'd *batch_root*.
 
-    The pending queue is re-listed from disk on every request.
-    ``cropped_this_session`` and the skip set are kept in-memory on the app
-    config (the counter is seeded by *session_cropped*, default ``0``).
+    *session_cropped* seeds the in-memory cropped counter (default ``0``).
     """
     root = require_intaked_root(batch_root)
     app = Flask(__name__)

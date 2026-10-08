@@ -1,84 +1,23 @@
 """Companion discovery and move-with-companions for pickkit image batches.
 
-This module is the single source of truth for companion-file behaviour:
-what counts as a companion, how companions are discovered, and how they
-move with their image. Pixel writes and cropping are deliberately out of
-scope here; ``lib_safety`` only moves and trashes files (write protection
-lives in ``guards.py``).
-
-Core principles
----------------
-Always together
-    A move relocates an image **and** every recognised same-stem sidecar
-    next to it, so a pair/group is never split across directories.
-Stem discovery
-    Companions are found by matching the image's stem (filename without
-    extension). Nothing else about the files is inspected.
-No clobber
-    If any destination path already exists, the whole move is refused
-    before anything is moved.
-Move relocates bytes, never rewrites pixels
-    Files are relocated with ``shutil.move``; their bytes are never read,
-    decoded, re-encoded, or written back. Pixel output such as crops is
-    out of scope for this module.
-
-What counts as a companion
---------------------------
-A companion is a file in the image's directory whose stem equals the
-image's stem and whose suffix (case-insensitive) is recognised. The
-recognised suffixes come from ``DEFAULT_COMPANION_SUFFIXES`` — see that
-constant for the current default set. The image itself is never treated
-as a companion, even if its suffix matches.
-
-For example, next to ``shot_001.png``::
+A companion is a file in the image's directory with the same stem and a
+suffix in :data:`DEFAULT_COMPANION_SUFFIXES` (any case). The image itself is
+never its own companion. Next to ``shot_001.png``::
 
     shot_001.yaml    -> companion
     shot_001.txt     -> companion
-    shot_001.png     -> the image; never returned
     shot_002.yaml    -> not a companion (different stem)
+
+A move takes the image and every companion together, and refuses the whole
+move before anything moves if any destination already exists. Files are
+relocated with ``shutil.move``; their bytes are never rewritten.
 
 Public API
 ----------
+``DEFAULT_COMPANION_SUFFIXES``
 ``find_companions(image_path, *, suffixes=None)``
-    Return same-stem sidecar files next to *image_path*, sorted by name.
-    ``suffixes=None`` uses :data:`DEFAULT_COMPANION_SUFFIXES`; a string
-    or iterable of suffixes overrides it.
-
 ``MoveResult``
-    Frozen dataclass describing where a move-with-companions landed:
-    ``image`` is the final image path and ``companions`` are the final
-    sidecar paths.
-
 ``move_with_companions(image_path, destination, *, suffixes=None, hook=None)``
-    Move *image_path* and its same-stem companions to *destination*.
-    Returns a :class:`MoveResult` and refuses with
-    :class:`DestinationExistsError` before moving anything if any target
-    already exists.
-
-Examples
---------
-Discover companions without touching the filesystem::
-
-    from lib_safety import find_companions
-
-    companions = find_companions("sandbox/batch_a/shot_001.png")
-
-Move an image and its sidecars into an existing directory::
-
-    from lib_safety import move_with_companions
-
-    result = move_with_companions(
-        "sandbox/batch_a/shot_001.png",
-        "sandbox/batch_a_staging",
-    )
-    result.image       # staging path of shot_001.png
-    result.companions  # staging paths of shot_001.yaml, shot_001.txt
-
-Out of scope
-------------
-Pixel writes, crops, and image save/export are **not** this module's job.
-``lib_safety`` only moves and trashes files; write protection is enforced
-separately by ``guards.require_new_file``.
 """
 
 from __future__ import annotations
@@ -116,11 +55,8 @@ def find_companions(
 ) -> list[Path]:
     """Return same-stem sidecar files next to *image_path*, sorted by name.
 
-    A candidate must share the image's stem and have a recognised suffix;
-    see the module docstring for the full companion rule. The image itself
-    is never included, even if its suffix is in ``suffixes``.
-    ``suffixes=None`` uses :data:`DEFAULT_COMPANION_SUFFIXES`; pass a
-    string or iterable of suffixes to override it.
+    ``suffixes`` (a string or iterable) overrides
+    :data:`DEFAULT_COMPANION_SUFFIXES`. The image itself is never included.
     """
     image = Path(image_path).expanduser()
     wanted = _normalise_suffixes(suffixes)
@@ -170,14 +106,10 @@ def move_with_companions(
     * a **non-existing file path** — the image gets exactly that path and
       companions follow the image's new stem.
 
-    If any target path already exists the operation is refused with
-    :class:`DestinationExistsError` before anything is moved. The image is
-    moved last, so a failed companion move never leaves the primary file in
-    the destination while its sidecars are still at the source.
-
-    Files are relocated, never rewritten in place: ``shutil.move`` changes
-    location, not bytes. With ``hook`` given, one :class:`AuditEvent` is
-    recorded on success or refusal.
+    If any target exists, raises :class:`DestinationExistsError` before
+    anything moves. The image moves last, so a failed companion move never
+    leaves it in the destination while its sidecars are still at the source.
+    Records one ``move`` event on *hook* on success or refusal.
     """
     image = Path(image_path).expanduser()
     if not image.is_file():

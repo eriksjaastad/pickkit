@@ -1,149 +1,13 @@
 """Assign images to user-supplied named bins, moving same-stem companions together.
 
-This module is the single source of truth for character-tools behaviour: how
-images are listed, how named bins are validated and reported, how an image and
-its same-stem companions are moved into a user-supplied bin under a bins root,
-how batch assignment maps are loaded and applied, how rejects are trashed, and
-how the thin CLI wraps the library. The private precursor sorter was a Flask
-UI with LoRA cast lists, demographic extractors, hard-coded
-``__character_group_N/`` bins, and FileTracker SQLite; pickkit's
-character-tools is a **library + thin CLI** that only moves/trashes files
-through ``lib_safety`` and never invents a taxonomy, group name, or
-recommendation.
+``pickkit-character`` sorts images into bins you name: a bin is one
+subdirectory of a bins root. Each move takes the image and its same-stem
+companions together, and a reject sends them to the OS trash. Every command
+is a dry-run unless ``--commit`` is given. Nothing reads or rewrites pixels,
+and the batch need not be intake'd (``.pickkit/`` is never touched). Each
+command prints a JSON summary.
 
-Principles
-----------
-Library first
-    :func:`move_to_bin` / :func:`assign_batch` / :func:`reject_image` are the
-    whole behaviour; the CLI in this module is a thin wrapper around them.
-User-supplied named bins
-    A bin is just a subdirectory name under a caller-supplied *bins_root*. Bin
-    names are validated with :func:`normalise_bin_name`; they are never
-    auto-slugged and the literal normalised name becomes the directory name
-    (spaces are fine on macOS/Linux).
-Move, never modify
-    Moves go through ``lib_safety.move_with_companions``; rejects go through
-    ``lib_safety.trash``. Pixels are never read, decoded, or rewritten.
-Dry-run vs commit
-    Default is dry-run (``commit=False``) everywhere a mutation would happen:
-    plans are validated and **nothing** is written. ``--commit`` /
-    ``commit=True`` performs the moves/trash.
-Audit
-    One :class:`~lib_safety.AuditEvent` with operation :data:`OPERATION`
-    (``character_tools``) is recorded per action; ``reason`` distinguishes
-    ``move`` from ``reject`` and records ``dry_run`` / ``committed=True``.
-    ``lib_safety`` additionally records its own ``move`` / ``trash`` events on
-    the same hook. Library default ``hook=None`` means
-    :data:`lib_safety.NULL_HOOK` (no audit file); the CLI creates an audit
-    file only when ``--audit PATH`` is given, via
-    ``lib_safety.JsonlAuditHook``.
-Optional middle tool, not a spine step
-    :data:`intake_init.PUBLIC_SPINE_STEPS` stays ``intake`` / ``review_select``
-    / ``multi_crop`` / ``finish_package``. character-tools never adds a step,
-    never requires an intake'd batch, and never touches ``.pickkit/project.json``
-    (``finished_at``, ``steps``, or ``metrics``).
-
-Bin naming
-----------
-:func:`normalise_bin_name` strips surrounding whitespace and refuses a name
-that is empty, contains ``/``, ``\\``, or ``..``, is exactly ``.``, or
-contains any character outside the allowed set (ASCII letters, ASCII digits,
-space, ``_``, ``-``, ``.``); refusals raise :class:`ValueError`. Destination
-for an image: ``<bins_root>/<bin_name>/<basename>`` with each same-stem
-companion beside it. The bin directory is created on first commit move if
-missing. Collision: if any destination path already exists the whole move is
-refused (:class:`~lib_safety.DestinationExistsError`) before anything is moved
-— never overwrite.
-
-Operations
-----------
-``list_images(source, *, suffixes=None)``
-    A file that looks like an image returns ``[source]`` (a non-image file
-    returns ``[]``); a directory returns the non-recursive image list, hidden
-    names skipped, sorted by name. ``suffixes=None`` uses
-    :data:`DEFAULT_IMAGE_SUFFIXES`.
-
-``check_bins(bins_root, *, suffixes=None)``
-    Scans immediate subdirectories of *bins_root* (one level). Every immediate
-    subdirectory is reported as a :class:`BinSummary` — including empty ones
-    (``image_count`` 0) so ``check`` shows structure. ``images`` is the sorted
-    tuple of image basenames directly inside it. Hidden subdirectories are
-    skipped.
-
-``move_to_bin(image, bin_name, *, bins_root, commit=False, hook=None)``
-    Validates *image* (existing file) and *bins_root* (existing directory),
-    normalises *bin_name*, discovers companions via
-    ``lib_safety.find_companions``, and plans destinations. Dry-run returns the
-    plan with ``committed=False`` and writes nothing. Commit creates the bin
-    directory if needed and calls ``lib_safety.move_with_companions(image,
-    bin_dir, hook=hook)``.
-
-``assign_batch(assignments, *, bins_root, commit=False, hook=None)``
-    Applies :class:`Assignment` items (or ``(image_path, bin_name)`` pairs) in
-    order. On the first hard failure (missing file, bad bin name, existing
-    destination) it stops and raises. Dry-run validates every plan without
-    moving; commit keeps earlier successful moves if a later one fails.
-
-``reject_image(image, *, commit=False, hook=None)``
-    Trashes the image **and** its same-stem companions. Dry-run lists what
-    would be trashed; commit calls ``lib_safety.trash(image, companions=True)``
-    so companions go first, then the image — no orphans.
-
-``load_assignments(path)``
-    Reads a JSON array of ``{"source": "...", "bin": "..."}`` objects, or a
-    JSONL file (``.jsonl``) with one object per line. Objects must have exactly
-    the ``source`` and ``bin`` keys; anything else raises :class:`ValueError`.
-    Relative ``source`` paths resolve against the current working directory.
-
-Public API
-----------
-``normalise_bin_name(name) -> str``
-    Validate and return the normalised bin directory name (see Bin naming).
-``list_images(source, *, suffixes=None) -> list[Path]``
-    List image files from a source file or directory (see Operations).
-``check_bins(bins_root, *, suffixes=None) -> list[BinSummary]``
-    Report every immediate subdirectory of *bins_root* as a BinSummary.
-``move_to_bin(image, bin_name, *, bins_root, commit=False, hook=None) -> MoveToBinResult``
-    Plan (dry-run) or perform (commit) one move into a named bin.
-``assign_batch(assignments, *, bins_root, commit=False, hook=None) -> AssignResult``
-    Plan or perform many moves in order; stops on the first hard failure.
-``reject_image(image, *, commit=False, hook=None) -> RejectResult``
-    Plan (dry-run) or perform (commit) a trash of an image and its companions.
-``load_assignments(path) -> list[Assignment]``
-    Load a JSON-array or JSONL assignment map (see Operations).
-``Assignment``
-    Frozen dataclass: ``source`` (image path, ``str`` or :class:`Path`) and
-    ``bin_name`` (:class:`str`).
-``BinSummary``
-    Frozen dataclass: ``name``, ``path``, ``image_count``, ``images`` (sorted
-    basename strings).
-``MoveToBinResult``
-    Frozen dataclass: ``image`` (source), ``bin_name``, ``bins_root``,
-    ``destination_image``, ``companions`` (destination paths; planned on
-    dry-run, final on commit), ``committed``.
-``AssignResult``
-    Frozen dataclass: ``bins_root``, ``planned_count``, ``moved_count``,
-    ``committed``, ``results`` (per-move results in order).
-``RejectResult``
-    Frozen dataclass: ``image``, ``companions``, ``trashed`` (the
-    ``lib_safety.trash`` return on commit, empty on dry-run), ``committed``.
-``DEFAULT_IMAGE_SUFFIXES``
-    Tuple of raster-image suffixes used by list/check (lowercase, with dots);
-    same set as :data:`intake_init.DEFAULT_IMAGE_SUFFIXES`.
-``OPERATION``
-    Audit operation recorded for every action: ``character_tools`` (``reason``
-    distinguishes ``move`` vs ``reject``).
-``build_parser()``
-    Return the argparse parser for the ``pickkit-character`` CLI. The parser
-    description is this module docstring; subcommands are ``list``, ``check``,
-    ``move``, ``assign``, and ``reject``.
-``main(argv=None)``
-    CLI entry point; parses args, dispatches, and prints a JSON summary.
-
-CLI
----
-The ``pickkit-character`` CLI uses subcommands and prints a JSON summary to
-stdout:
+Usage::
 
     pickkit-character list SOURCE
     pickkit-character check BINS_ROOT
@@ -151,34 +15,61 @@ stdout:
     pickkit-character assign MAP.json --bins-root DIR [--commit] [--audit PATH]
     pickkit-character reject IMAGE [--commit] [--audit PATH]
 
-``--commit`` performs the move/trash (default is dry-run). ``--audit PATH``
-appends audit events to PATH via ``lib_safety.JsonlAuditHook``; without it no
-audit file is created. ``--bin`` names the destination bin and ``--bins-root``
-points at the bins root for ``move`` / ``assign``. ``python -m
-character_tools`` runs the same CLI.
-
-Examples
+Commands
 --------
-    from character_tools import list_images, check_bins, move_to_bin
+``list``
+    The images in SOURCE: the file itself if it is an image, or the
+    non-hidden images directly inside a directory, sorted by name.
+``check``
+    Every non-hidden immediate subdirectory of BINS_ROOT, empty ones
+    included, with its image count and image names.
+``move``
+    Move IMAGE and its companions to ``<bins_root>/<bin>/``, creating the bin
+    on commit.
+``assign``
+    Apply a map of moves in order: a JSON array, or a ``.jsonl`` file with
+    one object per line, of ``{"source": ..., "bin": ...}`` (exactly those
+    keys; relative sources resolve against the current directory). Stops at
+    the first failure; on commit, earlier moves stay done.
+``reject``
+    Trash IMAGE and its companions (companions first, then the image).
 
-    list_images("sandbox/batch_a")                    # 4 pngs, sorted
-    plan = move_to_bin("sandbox/batch_a/img_004.png", "alice",
-                       bins_root="sandbox/bins")
-    plan.committed                                     # False
-    done = move_to_bin("sandbox/batch_a/img_004.png", "alice",
-                       bins_root="sandbox/bins", commit=True)
-    done.committed                                     # True
+Options
+-------
+``--bin NAME`` / ``--bins-root DIR``
+    The destination bin and the directory that holds the bins.
+``--commit``
+    Do the move or trash. Without it the plan is checked and printed.
+``--audit PATH``
+    Append audit events (operation ``character_tools``) to PATH. Without it
+    no audit file is written.
 
-Out of scope
-------------
-The interactive web sorter UI (Flask/Tk) is **out of scope** — no web server,
-templates, or browser UI. LoRA cast lists, demographic extractors
-(ethnicity/age/body/hair), ``_underscore`` private bins, similarity-map / face
-grouper, prompt/YAML AI analysis, FileTracker SQLite, client project paths, and
-hard-coded ``__character_group_N/`` names are **not** this module's job (users
-may choose any valid bin name, including those strings, but none are
-required). character-tools never extends ``PUBLIC_SPINE_STEPS``, never requires
-intake, and never mutates the spine manifest.
+Bin names
+---------
+A name is stripped of surrounding whitespace and used as is, never slugged.
+It may contain only ASCII letters, digits, space, ``_``, ``-`` and ``.``, and
+must not be empty, ``.`` or contain ``..``. If any destination file already
+exists, the whole move is refused before anything moves.
+
+Public API
+----------
+``normalise_bin_name(name) -> str``
+``list_images(source, *, suffixes=None) -> list[Path]``
+``check_bins(bins_root, *, suffixes=None) -> list[BinSummary]``
+``move_to_bin(image, bin_name, *, bins_root, commit=False, hook=None) -> MoveToBinResult``
+``assign_batch(assignments, *, bins_root, commit=False, hook=None) -> AssignResult``
+``reject_image(image, *, commit=False, hook=None) -> RejectResult``
+``load_assignments(path) -> list[Assignment]``
+``Assignment``
+``BinSummary``
+``MoveToBinResult``
+``AssignResult``
+``RejectResult``
+``DEFAULT_IMAGE_SUFFIXES``
+    Same set as ``intake_init.DEFAULT_IMAGE_SUFFIXES``.
+``OPERATION = "character_tools"``
+``build_parser()``
+``main(argv=None)``
 """
 
 from __future__ import annotations
@@ -203,6 +94,26 @@ from lib_safety import (
     trash,
 )
 
+#: Names the ``character_tools`` package re-exports.
+__all__ = [
+    "DEFAULT_IMAGE_SUFFIXES",
+    "OPERATION",
+    "Assignment",
+    "AssignResult",
+    "BinSummary",
+    "MoveToBinResult",
+    "RejectResult",
+    "assign_batch",
+    "build_parser",
+    "check_bins",
+    "list_images",
+    "load_assignments",
+    "main",
+    "move_to_bin",
+    "normalise_bin_name",
+    "reject_image",
+]
+
 #: Raster-image suffixes used by list/check (lowercase, with dots); same set as
 #: ``intake_init.DEFAULT_IMAGE_SUFFIXES``.
 DEFAULT_IMAGE_SUFFIXES: tuple[str, ...] = (
@@ -217,13 +128,7 @@ _BIN_NAME_RE = re.compile(r"[A-Za-z0-9 _.-]+\Z")
 
 
 def normalise_bin_name(name: str) -> str:
-    """Validate *name* and return the normalised bin directory name.
-
-    Strips surrounding whitespace; refuses empty names, names containing
-    ``/``, ``\\``, or ``..``, the name ``.``, and any character outside the
-    allowed set (ASCII letters, ASCII digits, space, ``_``, ``-``, ``.``).
-    Returns the stripped name unchanged — never auto-slugged.
-    """
+    """Return *name* stripped, or raise :class:`ValueError` (see "Bin names")."""
     if not isinstance(name, str):
         raise ValueError(f"bin name must be a string, got {type(name).__name__}")
     normalised = name.strip()
@@ -245,12 +150,9 @@ def normalise_bin_name(name: str) -> str:
 
 
 def list_images(source: str | Path, *, suffixes: object = None) -> list[Path]:
-    """List image files from a source file or directory.
+    """List image files from a source file or directory (not recursive).
 
-    A file that looks like an image returns ``[source]`` (a non-image file
-    returns ``[]``); a directory returns the non-recursive image list, hidden
-    names skipped, sorted by name. ``suffixes=None`` uses
-    :data:`DEFAULT_IMAGE_SUFFIXES`.
+    ``suffixes=None`` uses :data:`DEFAULT_IMAGE_SUFFIXES`.
     """
     src = Path(source).expanduser()
     if not src.exists():
@@ -287,12 +189,7 @@ class BinSummary:
 
 
 def check_bins(bins_root: str | Path, *, suffixes: object = None) -> list[BinSummary]:
-    """Report every immediate subdirectory of *bins_root* as a BinSummary.
-
-    Scans one level only; empty subdirectories are included with
-    ``image_count`` 0, hidden subdirectories are skipped, and ``images`` holds
-    sorted image basenames found directly inside each subdirectory.
-    """
+    """Report every non-hidden immediate subdirectory of *bins_root*, empty or not."""
     root = Path(bins_root).expanduser()
     if not root.exists():
         raise FileNotFoundError(f"bins root not found: {root}")
@@ -388,11 +285,10 @@ def move_to_bin(
     """Move *image* (and its same-stem companions) into the named bin.
 
     Dry-run (default) validates the plan and writes nothing; commit creates
-    ``<bins_root>/<bin_name>/`` if needed and calls
-    ``lib_safety.move_with_companions(image, bin_dir, hook=hook)``. Refuses
-    with :class:`FileNotFoundError` / :class:`NotADirectoryError` for bad
-    paths, :class:`ValueError` for a bad bin name, and
-    :class:`~lib_safety.DestinationExistsError` when any destination exists.
+    the bin if needed and moves. Raises :class:`FileNotFoundError` /
+    :class:`NotADirectoryError` for bad paths, :class:`ValueError` for a bad
+    bin name, and :class:`~lib_safety.DestinationExistsError` when any
+    destination exists.
     """
     source = Path(image).expanduser()
     root = Path(bins_root).expanduser()
@@ -443,12 +339,9 @@ def move_to_bin(
 
 @dataclass(frozen=True)
 class Assignment:
-    """One assignment: an image source path and a destination bin name.
+    """One assignment: an image path and a bin name, both checked when applied.
 
-    ``source`` is the image path (``str`` or :class:`Path`); relative paths
-    resolve against the current working directory when applied. ``bin_name``
-    is a string and is validated by :func:`normalise_bin_name` when the
-    assignment is applied.
+    A relative ``source`` resolves against the current working directory.
     """
 
     source: str | Path
@@ -498,10 +391,8 @@ def assign_batch(
 ) -> AssignResult:
     """Apply *assignments* in order into named bins under *bins_root*.
 
-    Accepts :class:`Assignment` items or ``(image_path, bin_name)`` pairs. On
-    the first hard failure (missing file, bad bin name, existing destination)
-    it stops and raises; dry-run validates every plan without moving, while
-    commit keeps earlier successful moves when a later one fails.
+    Accepts :class:`Assignment` items or ``(image_path, bin_name)`` pairs.
+    Stops and raises at the first failure; on commit, earlier moves stay done.
     """
     root = Path(bins_root).expanduser()
     if not root.exists():
@@ -552,9 +443,8 @@ def reject_image(
 ) -> RejectResult:
     """Trash *image* and its same-stem companions (dry-run default).
 
-    Dry-run lists what would be trashed and writes nothing. Commit calls
-    ``lib_safety.trash(image, companions=True, hook=hook)`` so companions go
-    first, then the image — no orphans are left behind.
+    On commit, companions go first and then the image, so no sidecar is left
+    without its image.
     """
     source = Path(image).expanduser()
     hook = hook or NULL_HOOK
@@ -614,12 +504,10 @@ def _record_to_assignment(record: object, path: Path, index: int) -> Assignment:
 
 
 def load_assignments(path: str | Path) -> list[Assignment]:
-    """Load assignments from a JSON array file or a JSONL file.
+    """Load assignments from a JSON array file or a ``.jsonl`` file.
 
-    A ``.jsonl`` file is read one JSON object per line; any other file is read
-    as a JSON array of ``{"source": "...", "bin": "..."}`` objects. Objects
-    must have exactly the ``source`` and ``bin`` keys; blank JSONL lines are
-    skipped and anything else is refused with :class:`ValueError`.
+    Each object must have exactly the ``source`` and ``bin`` keys; anything
+    else raises :class:`ValueError`.
     """
     return load_json_records(path, "assignments file", _record_to_assignment)
 
