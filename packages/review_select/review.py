@@ -244,9 +244,9 @@ def apply_decisions(
     Moves each source and its companions into its action's directory and
     writes the log, audit and manifest records described in the module
     docstring; events also go to *hook* when given. ``finish=True`` sets the
-    step's ``finished_at``. All decisions are validated first, so a refusal
-    moves nothing and creates no directory. Raises :class:`FileNotFoundError`
-    for a missing or un-intake'd batch root.
+    step's ``finished_at`` if at least one decision is applied. All decisions
+    are validated first, so a refusal moves nothing and creates no directory.
+    Raises :class:`FileNotFoundError` for a missing or un-intake'd batch root.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():

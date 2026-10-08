@@ -11,8 +11,10 @@ The pending queue is re-read from disk on every request: images under
 destination ``__cropped/<same name>`` (:data:`CROPPED_DIR_NAME`) does not
 exist yet. The source stays in ``__crop/``; once cropped it drops out of the
 queue. The skip set and cropped-this-session count reset when the server
-restarts. To finish the step, run ``pickkit-crop <batch_root> --finish``
-from the CLI.
+restarts. Finish is CLI-only, and ``--finish`` sets ``finished_at`` only when
+the same call applies at least one crop (e.g. pass it with the last image's
+crop); a bare ``pickkit-crop <batch_root> --finish`` leaves the step
+unfinished.
 
 Keyboard shortcuts
 ------------------

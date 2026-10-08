@@ -9,8 +9,10 @@ The pending queue is re-read from disk on every request: every image under the
 batch root (suffix in ``intake_init.DEFAULT_IMAGE_SUFFIXES``) except hidden
 paths and anything inside a stage directory (:data:`STAGE_DIR_NAMES`:
 ``__selected``, ``__crop``, ``__reject``, ``__cropped``). The
-decided-this-session count resets when the server restarts. To finish the
-step, run ``pickkit-review <batch_root> --finish`` from the CLI.
+decided-this-session count resets when the server restarts. Finish is
+CLI-only, and ``--finish`` sets ``finished_at`` only when the same call
+applies at least one decision (e.g. pass it with the last image's decision);
+a bare ``pickkit-review <batch_root> --finish`` leaves the step unfinished.
 
 Keyboard shortcuts
 ------------------

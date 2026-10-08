@@ -382,9 +382,10 @@ def crop_batch(
 
     Writes each crop and the log, audit and manifest records described in
     the module docstring; events also go to *hook* when given.
-    ``finish=True`` sets the step's ``finished_at``. All specs are validated
-    first, so a refusal writes no crop and no log record. Raises
-    :class:`FileNotFoundError` for a missing or un-intake'd batch root.
+    ``finish=True`` sets the step's ``finished_at`` if at least one crop is
+    applied. All specs are validated first, so a refusal writes no crop and
+    no log record. Raises :class:`FileNotFoundError` for a missing or
+    un-intake'd batch root.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():
