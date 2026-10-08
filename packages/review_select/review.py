@@ -43,9 +43,10 @@ Files
 The batch must be intake'd (``.pickkit/project.json`` must exist). Each
 applied decision appends one record to ``.pickkit/decisions.jsonl`` with
 ``timestamp``, ``action``, ``source``, ``destination`` and ``companions``
-(paths relative to the batch root), plus ``note`` when given; one event to
-``.pickkit/audit.jsonl``; and updates the ``review_select`` step
-(``started_at`` on the first decision, ``images_processed`` per decision).
+(paths relative to the batch root), plus ``note`` when given; appends a
+``move`` and a ``review_select`` event to ``.pickkit/audit.jsonl``; and
+updates the ``review_select`` step (``started_at`` on the first decision,
+``images_processed`` per decision).
 
 Public API
 ----------

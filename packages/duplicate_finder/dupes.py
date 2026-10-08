@@ -35,8 +35,9 @@ Options
     Trash the drops. All plans are checked first; the first failed trash
     stops the run, and earlier drops stay trashed.
 ``--audit PATH``
-    Append audit events (operation :data:`OPERATION`) to PATH. Without it no
-    audit file is written.
+    Append audit events to PATH: :data:`OPERATION` events for the find and
+    each drop, plus lib_safety's ``trash`` event per committed drop. Without
+    it no audit file is written.
 ``--json``
     Accepted for symmetry; JSON is already the output.
 

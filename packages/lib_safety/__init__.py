@@ -4,7 +4,8 @@ Every pickkit tool that touches files goes through these, so the same rules
 hold everywhere:
 
 1. Move, don't modify: originals are relocated, never rewritten in place.
-2. Companions stay together: an image's same-stem sidecars move and trash
+2. Companions stay together: an image's same-stem sidecars (``.yaml``,
+   ``.yml``, ``.txt``, ``.caption``, ``.json``, ``.xmp``) move and trash
    with it.
 3. No clobber: a move or write refuses any existing destination.
 4. Trash, don't unlink: deletes go to the OS trash and can be recovered.

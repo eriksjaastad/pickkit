@@ -506,7 +506,8 @@ def finish_package(
     scanned source.
 
     Raises :class:`FileNotFoundError` / :class:`NotADirectoryError` for a bad
-    batch root, a batch that is not intake'd or a missing inventory;
+    batch root or ``content`` directory, a batch that is not intake'd or a
+    missing inventory;
     :class:`ManifestError` when ``project.json`` is not a JSON object;
     :class:`ValueError` when ``content`` is outside the batch root;
     :class:`RefusedWriteError` when the ZIP exists without ``force``; and

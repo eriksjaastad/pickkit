@@ -20,8 +20,8 @@ Buttons
 
 Host / port
 -----------
-Binds ``127.0.0.1:8767`` by default (``DEFAULT_HOST`` / ``DEFAULT_PORT``);
-``pickkit-finish --host`` / ``--port`` override it.
+Binds ``127.0.0.1:8767`` by default, local only (``DEFAULT_HOST`` /
+``DEFAULT_PORT``); ``pickkit-finish --host`` / ``--port`` override it.
 
 Routes
 ------

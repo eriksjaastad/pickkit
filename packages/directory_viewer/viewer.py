@@ -15,9 +15,10 @@ extension. Exit status is 1 when a root is missing or not a directory.
 Options
 -------
 ``--sample N``
-    How many image names to list per directory (``sample_limit``; default
-    :data:`DEFAULT_SAMPLE_LIMIT`, 20). ``0`` lists none and ``-1`` lists all;
-    counts are always complete.
+    How many image names to include per directory in the ``--json``
+    ``images`` list (``sample_limit``; default :data:`DEFAULT_SAMPLE_LIMIT`,
+    20). ``0`` includes none and ``-1`` all; counts are always complete. The
+    text output shows no names.
 ``--json``
     Print JSON instead: one report object for ``inventory``, an array for
     ``compare``.

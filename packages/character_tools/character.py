@@ -41,8 +41,9 @@ Options
 ``--commit``
     Do the move or trash. Without it the plan is checked and printed.
 ``--audit PATH``
-    Append audit events (operation ``character_tools``) to PATH. Without it
-    no audit file is written.
+    Append audit events to PATH: one ``character_tools`` event per action,
+    plus lib_safety's ``move`` or ``trash`` event on commit. Without it no
+    audit file is written.
 
 Bin names
 ---------

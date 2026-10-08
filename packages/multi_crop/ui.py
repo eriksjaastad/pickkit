@@ -35,8 +35,8 @@ are posted. ``multi_crop.crop.clamp_box`` is the final safety net.
 
 Host / port
 -----------
-Binds ``127.0.0.1:8766`` by default (``DEFAULT_HOST`` / ``DEFAULT_PORT``);
-``pickkit-crop --host`` / ``--port`` override it.
+Binds ``127.0.0.1:8766`` by default, local only (``DEFAULT_HOST`` /
+``DEFAULT_PORT``); ``pickkit-crop --host`` / ``--port`` override it.
 
 Routes
 ------

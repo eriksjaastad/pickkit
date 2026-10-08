@@ -1,8 +1,9 @@
 """Companion discovery and move-with-companions for pickkit image batches.
 
 A companion is a file in the image's directory with the same stem and a
-suffix in :data:`DEFAULT_COMPANION_SUFFIXES` (any case). The image itself is
-never its own companion. Next to ``shot_001.png``::
+suffix in :data:`DEFAULT_COMPANION_SUFFIXES` (``.yaml``, ``.yml``, ``.txt``,
+``.caption``, ``.json``, ``.xmp``; any case). The image itself is never its
+own companion. Next to ``shot_001.png``::
 
     shot_001.yaml    -> companion
     shot_001.txt     -> companion
