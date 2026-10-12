@@ -413,6 +413,23 @@ def test_cli_decisions_file_applies_and_prints_summary(
     assert (root / KEEP_DIR_NAME / "img_001.png").is_file()
 
 
+def test_cli_reports_a_bad_manifest_with_the_shared_loader_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = stage_batch_a(tmp_path)
+    intake_init(root)
+    manifest = root / ".pickkit" / "project.json"
+    manifest.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        main([str(root), "--reject", "img_003.png"])
+
+    assert exc.value.code == 1
+    assert capsys.readouterr().err == (
+        f"pickkit-review: error: manifest is not a JSON object: {manifest}\n"
+    )
+
+
 def test_cli_repeated_flags_and_finish(tmp_path: Path) -> None:
     root = stage_batch_a(tmp_path)
     intake_init(root)

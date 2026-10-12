@@ -460,6 +460,23 @@ def test_cli_crops_file_applies_and_finishes(
     assert _multi_crop_step(root)["finished_at"].endswith("Z")
 
 
+def test_cli_reports_a_bad_manifest_with_the_shared_loader_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = stage_batch_a(tmp_path)
+    intake_init(root)
+    manifest = root / ".pickkit" / "project.json"
+    manifest.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        main([str(root), "--source", "img_001.png", "--box", "0,0,32,48"])
+
+    assert exc.value.code == 1
+    assert capsys.readouterr().err == (
+        f"pickkit-crop: error: manifest is not a JSON object: {manifest}\n"
+    )
+
+
 def test_cli_one_shot_source_and_box(tmp_path: Path) -> None:
     root = stage_batch_a(tmp_path)
     intake_init(root)

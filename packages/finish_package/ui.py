@@ -63,7 +63,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from lib_safety import rel_path
+from lib_safety import ManifestError, load_manifest, rel_path
 from lib_safety.webui import require_intaked_root, run_app
 
 from .finish import (
@@ -74,12 +74,10 @@ from .finish import (
     PICKKIT_DIR_NAME,
     FinishLogError,
     FinishResult,
-    ManifestError,
     classify_file,
     default_content_roots,
     finish_package,
     load_allowlist,
-    load_manifest,
 )
 
 #: Default bind host for the local finish wizard (loopback only).
