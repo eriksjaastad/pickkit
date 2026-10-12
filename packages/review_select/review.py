@@ -82,6 +82,7 @@ from lib_safety import (
     find_companions,
     find_step,
     load_json_records,
+    load_manifest,
     move_with_companions,
     rel_path,
     require_new_file,
@@ -246,7 +247,8 @@ def apply_decisions(
     docstring; events also go to *hook* when given. ``finish=True`` sets the
     step's ``finished_at`` if at least one decision is applied. All decisions
     are validated first, so a refusal moves nothing and creates no directory.
-    Raises :class:`FileNotFoundError` for a missing or un-intake'd batch root.
+    Raises :class:`FileNotFoundError` for a missing or un-intake'd batch root
+    and :class:`ManifestError` for an unreadable ``project.json``.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():
@@ -257,13 +259,13 @@ def apply_decisions(
 
     pickkit_dir = root / PICKKIT_DIR_NAME
     manifest_path = pickkit_dir / MANIFEST_NAME
-    if not manifest_path.is_file():
+    if not manifest_path.exists():
         raise FileNotFoundError(
             f"batch is not intake'd: missing manifest {manifest_path}; "
             f"run pickkit-intake first"
         )
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = load_manifest(manifest_path)
     step = find_step(manifest, REVIEW_SELECT_STEP_NAME, manifest_path)
 
     decisions = list(decisions)

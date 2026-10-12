@@ -91,6 +91,7 @@ from lib_safety import (
     append_jsonl,
     find_step,
     load_json_records,
+    load_manifest,
     rel_path,
     require_new_file,
     write_manifest,
@@ -385,7 +386,8 @@ def crop_batch(
     ``finish=True`` sets the step's ``finished_at`` if at least one crop is
     applied. All specs are validated first, so a refusal writes no crop and
     no log record. Raises :class:`FileNotFoundError` for a missing or
-    un-intake'd batch root.
+    un-intake'd batch root and :class:`ManifestError` for an unreadable
+    ``project.json``.
     """
     root = Path(batch_root).expanduser()
     if not root.exists():
@@ -396,13 +398,13 @@ def crop_batch(
 
     pickkit_dir = root / PICKKIT_DIR_NAME
     manifest_path = pickkit_dir / MANIFEST_NAME
-    if not manifest_path.is_file():
+    if not manifest_path.exists():
         raise FileNotFoundError(
             f"batch is not intake'd: missing manifest {manifest_path}; "
             f"run pickkit-intake first"
         )
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = load_manifest(manifest_path)
     step = find_step(manifest, MULTI_CROP_STEP_NAME, manifest_path)
 
     specs = list(specs)

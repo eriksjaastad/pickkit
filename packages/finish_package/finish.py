@@ -68,8 +68,6 @@ Public API
 ``finish_package(batch_root, *, commit=False, force=False, content=None, output_zip=None, hook=None)``
     Dry-run report or commit; returns a :class:`FinishResult`.
 ``FinishResult``
-``load_manifest(path)``
-    Read ``project.json`` as a dict; raises :class:`ManifestError`.
 ``load_allowlist(path)``
     Read an inventory's ``allowedExtensions`` as a lowercase, dot-free set.
 ``classify_file(path, batch_root, *, allowed)``
@@ -114,6 +112,7 @@ from lib_safety import (
     RefusedWriteError,
     append_jsonl,
     find_step,
+    load_manifest,
     rel_path,
     require_new_file,
     write_manifest,
@@ -243,57 +242,6 @@ class FinishLogError(Exception):
     def __init__(self, message: str, result: "FinishResult") -> None:
         super().__init__(message)
         self.result = result
-
-
-class ManifestError(ValueError):
-    """``project.json`` could not be read as a JSON object.
-
-    The message always names the manifest path. Callers (the CLI and the
-    finish wizard) map this to an error response instead of a traceback.
-    """
-
-
-def load_manifest(path: str | Path) -> dict[str, object]:
-    """Read *path* and return the manifest as a JSON object.
-
-    Raises :class:`ManifestError` naming *path* when the path is missing, not
-    a regular file, unreadable, not valid UTF-8, not valid JSON, or not an
-    object.
-    """
-    manifest_path = Path(path).expanduser()
-    try:
-        if manifest_path.is_dir():
-            raise ManifestError(
-                f"cannot read manifest {manifest_path}: path is a directory"
-            )
-        # is_file() is false for a FIFO or other special file. Reading those
-        # can block forever, so reject them before read_text.
-        if not manifest_path.is_file():
-            raise ManifestError(
-                f"cannot read manifest {manifest_path}: not a regular file"
-            )
-        text = manifest_path.read_text(encoding="utf-8")
-    except ManifestError:
-        raise
-    except UnicodeDecodeError as exc:
-        raise ManifestError(
-            f"manifest is not valid UTF-8: {manifest_path}: {exc}"
-        ) from exc
-    except OSError as exc:
-        raise ManifestError(
-            f"cannot read manifest {manifest_path}: {exc}"
-        ) from exc
-    try:
-        data = json.loads(text)
-    except ValueError as exc:
-        raise ManifestError(
-            f"manifest is not valid JSON: {manifest_path}: {exc}"
-        ) from exc
-    if not isinstance(data, dict):
-        raise ManifestError(
-            f"manifest is not a JSON object: {manifest_path}"
-        )
-    return data
 
 
 def load_allowlist(path: str | Path) -> set[str]:

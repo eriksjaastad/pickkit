@@ -402,7 +402,7 @@ def test_commit_reports_a_bad_manifest_as_not_committed(
 
 
 def test_load_manifest_names_the_path_for_a_missing_file(tmp_path: Path) -> None:
-    from finish_package.finish import ManifestError, load_manifest
+    from lib_safety import ManifestError, load_manifest
 
     missing = tmp_path / "project.json"
     with pytest.raises(ManifestError, match="cannot read manifest") as exc:

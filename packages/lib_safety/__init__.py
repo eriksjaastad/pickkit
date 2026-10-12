@@ -30,8 +30,10 @@ from .audit import (
 )
 from .batch import (
     append_jsonl,
+    ManifestError,
     find_step,
     load_json_records,
+    load_manifest,
     normalise_suffix_set,
     rel_path,
     write_manifest,
@@ -55,6 +57,7 @@ __all__ = [
     "DestinationExistsError",
     "FanoutHook",
     "JsonlAuditHook",
+    "ManifestError",
     "MoveResult",
     "NULL_HOOK",
     "NullAuditHook",
@@ -64,6 +67,7 @@ __all__ = [
     "find_companions",
     "find_step",
     "load_json_records",
+    "load_manifest",
     "move_with_companions",
     "normalise_suffix_set",
     "optional_jsonl_hook",
