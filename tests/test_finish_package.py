@@ -353,6 +353,38 @@ def test_refuse_when_inventory_missing(tmp_path: Path) -> None:
         finish_package(root)
 
 
+def test_manifest_without_steps_refused_before_zip(tmp_path: Path) -> None:
+    root = stage_batch_a(tmp_path)
+    intake_init(root)
+    manifest_path = root / ".pickkit" / "project.json"
+    manifest = read_json(manifest_path)
+    del manifest["steps"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no 'steps' list"):
+        finish_package(root, commit=True)
+
+    assert not (root / DEFAULT_ZIP_NAME).exists()
+    assert read_json(manifest_path) == manifest
+
+
+def test_manifest_without_finish_step_refused_before_zip(tmp_path: Path) -> None:
+    root = stage_batch_a(tmp_path)
+    intake_init(root)
+    manifest_path = root / ".pickkit" / "project.json"
+    manifest = read_json(manifest_path)
+    manifest["steps"] = [
+        step for step in manifest["steps"] if step["name"] != "finish_package"
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no 'finish_package' step"):
+        finish_package(root, commit=True)
+
+    assert not (root / DEFAULT_ZIP_NAME).exists()
+    assert read_json(manifest_path) == manifest
+
+
 def test_content_outside_batch_refused(tmp_path: Path) -> None:
     root = stage_batch_a(tmp_path)
     intake_init(root)

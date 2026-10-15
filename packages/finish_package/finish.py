@@ -457,7 +457,8 @@ def finish_package(
     batch root or ``content`` directory, a batch that is not intake'd or a
     missing inventory;
     :class:`ManifestError` when ``project.json`` is not a JSON object;
-    :class:`ValueError` when ``content`` is outside the batch root;
+    :class:`ValueError` when the manifest has no ``steps`` list or no
+    ``finish_package`` step, or ``content`` is outside the batch root;
     :class:`RefusedWriteError` when the ZIP exists without ``force``; and
     :class:`FinishLogError` when the commit succeeded but a log write failed.
     """
@@ -479,8 +480,9 @@ def finish_package(
             f"run pickkit-intake first"
         )
     # Validate before any scan or ZIP write so a bad manifest cannot leave
-    # a delivery ZIP behind. ManifestError names the path.
-    load_manifest(manifest_path)
+    # a delivery ZIP behind. ManifestError and find_step's ValueError name
+    # the path.
+    find_step(load_manifest(manifest_path), FINISH_PACKAGE_STEP_NAME, manifest_path)
 
     allowed = load_allowlist(inventory_path)
 
