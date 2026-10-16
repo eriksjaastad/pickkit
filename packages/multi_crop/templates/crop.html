@@ -97,7 +97,7 @@
       {% else %}
       <div class="empty">
         <p>Queue empty — no pending images under <code>__crop/</code>.</p>
-        <p>Finish stays CLI-only for now: keep using <code>pickkit-crop</code> with <code>--finish</code> in scripts.</p>
+        <p>Finish is CLI-only, and <code>--finish</code> marks the step finished only when the same command applies at least one crop, e.g. the last image's: <code>pickkit-crop "{{ batch_root }}" --source PATH --box L,T,R,B --finish</code> (or <code>--crops</code>). A bare <code>--finish</code> on an empty queue leaves the step unfinished.</p>
       </div>
       {% endif %}
       <div class="error" id="error"></div>

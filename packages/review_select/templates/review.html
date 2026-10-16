@@ -84,7 +84,7 @@
       {% else %}
       <div class="empty">
         <p>Queue empty — no pending images under this batch root.</p>
-        <p>Finish stays CLI-only for now: <code>pickkit-review "{{ batch_root }}" --finish</code></p>
+        <p>Finish is CLI-only, and <code>--finish</code> marks the step finished only when the same command applies at least one decision, e.g. the last image's: <code>pickkit-review "{{ batch_root }}" --keep PATH --finish</code> (or <code>--crop</code>, <code>--reject</code>, <code>--decisions</code>). A bare <code>--finish</code> on an empty queue leaves the step unfinished.</p>
       </div>
       {% endif %}
       <div class="error" id="error"></div>
