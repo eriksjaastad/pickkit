@@ -97,7 +97,7 @@
       {% else %}
       <div class="empty">
         <p>Queue empty — no pending images under <code>__crop/</code>.</p>
-        <p>Finish stays CLI-only for now: keep using <code>pickkit-crop</code> with <code>--finish</code> in scripts.</p>
+        <p>This page cannot finish the step, and a bare <code>--finish</code> leaves it unfinished: <code>pickkit-crop --finish</code> marks the step finished only when the same command also applies at least one crop (<code>--source</code> with <code>--box</code>, or <code>--crops</code>). To finish, crop the final image on the CLI with <code>--finish</code>, before this page empties the queue.</p>
       </div>
       {% endif %}
       <div class="error" id="error"></div>
